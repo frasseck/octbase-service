@@ -141,7 +141,7 @@ architecture and guards, all app docs (`operations.md`,
 `technical_documentation.md`, `architecture.md`, `business-plan.md`), the
 marketing mailer, and full EN/DE locale parity. New findings, all fixed:
 
-### F1 — Prometheus `/metrics` was world-readable through the front door — **fixed in dev; demo pending release**
+### F1 — Prometheus `/metrics` was world-readable through the front door — **fixed everywhere** (dev same day; demo with the v1.0.3 deploy)
 The shipped `octbase-frontend/caddy/Caddyfile` proxied `/metrics` to the API,
 so every deployed stack exposed Go runtime + per-route request metrics
 publicly (verified live on `https://demo.ocete.ch/metrics`).
@@ -213,10 +213,12 @@ touching; that's why check §3/C1 exists.)
    `FRONTEND_PORT=127.0.0.1:8080/8081` (demo/dev `.env`) and
    `WEB_PORT=127.0.0.1:8082` (marketing `.env`) and restart the three stacks.
    Bonus: the edge config also stops depending on the **dynamic** public IP.
-2. **Release the pending `release_v14` work** (CHANGELOG `Unreleased`) so the
-   compose env pass-throughs and the front-door `/metrics` removal (F1) reach
-   `main` — then demo's untracked `podman-compose.demo.yml` can be reduced or
-   dropped, and the demo stops serving public metrics.
+2. ~~Release the pending `release_v14` work~~ — **done 2026-07-10 as
+   v1.0.3** (`scripts/release.sh`, merged to `main`, demo redeployed via
+   `git pull`). The compose env pass-throughs are on `main`, so demo's
+   temporary untracked `podman-compose.demo.yml` was dropped again (unit and
+   `~/restart.sh` back to plain `podman-compose`); the demo no longer serves
+   public `/metrics` (verified) and reports v1.0.3 with migration 26.
 3. **Rotate the marketing SMTP password** — it sat in three files until today.
 4. Edge IP/auth restriction for `dev.ocete.ch`/`demo.ocete.ch` and the other
    organizational items — tracked in the security concept §7.

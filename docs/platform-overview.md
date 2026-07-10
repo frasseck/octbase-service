@@ -76,13 +76,13 @@ Layered compose files decide the flavour:
 |---|---|---|
 | `podman-compose.yml` | app repo | The deployable base stack (demo mode **on**, localhost CORS) |
 | `podman-compose.dev.yml` | app repo | Dev-only Mailpit mail capture — **never deploy** |
-| `podman-compose.demo.yml` | untracked, demo checkout only | Demo override: public CORS origin/app URL + secure cookies until the base compose threads those env vars (next release) |
 | `podman-compose.client.yml` | this repo | Production override: demo mode **off**, secure cookies, real CORS, ledger-managed edition/seat vars, persistent attachments mount |
 
-The demo instance runs base + demo override (demo mode on is intended there;
-the override is referenced by its systemd unit and `~/restart.sh`, and is kept
-out of `git status` via `.git/info/exclude`); client instances always run
-base + client override.
+The demo instance runs the base file alone — demo mode on is intended there,
+and since v1.0.3 the base compose threads the public-origin and secure-cookie
+env vars straight from the demo's `.env` (a temporary untracked demo override
+bridged the gap for one day; see the consistency register D1). Client
+instances always run base + client override.
 
 ## 4. How a change reaches production
 
