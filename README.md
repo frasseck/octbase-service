@@ -57,6 +57,7 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `backup/octbase-backup.{service,timer}` | systemd user units for the nightly backup run |
 | `docs/platform-overview.md` | The whole platform: all four repos, host topology, release flow, doc map |
 | `docs/consistency-register.md` | Cross-repo contracts that must stay in sync + known drift, with a per-release checklist |
+| `docs/production-readiness-plan.md` | The ordered plan to production: launch blockers, structural phase, go/no-go gate for client #1 |
 | `docs/security-data-protection-concept.md` | Security & data-protection concept (standards mapping, open items) |
 
 ## Prerequisites
@@ -272,6 +273,10 @@ and the open organizational items (AV contracts, VVT, pentest, edge
 restriction).
 
 ## Known gaps / next steps
+
+The prioritized, acceptance-criteria'd version of this list — including what
+must land **before the first paying client** — is
+[`docs/production-readiness-plan.md`](docs/production-readiness-plan.md).
 
 - **Backups**: host-level DB backups with an automated restore test now run
   nightly (`backup/`, systemd timer `octbase-backup.timer` at 03:30; dumps in

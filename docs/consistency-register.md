@@ -207,6 +207,11 @@ touching; that's why check §3/C1 exists.)
 
 ## 2.1 Open remainders (not fixable from this repo / this account)
 
+> The forward-looking, sequenced version of these (plus the launch blockers
+> for client #1) is the
+> [production-readiness plan](production-readiness-plan.md); this list only
+> tracks drift-review leftovers.
+
 1. **Repoint the edge Caddyfile to loopback** (root): change the three
    `reverse_proxy 178.105.142.1:<port>` targets in `/etc/caddy/Caddyfile` to
    `127.0.0.1:<port>` and reload Caddy; then set
