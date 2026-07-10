@@ -1,0 +1,38 @@
+# Ledger entry template — copy to <name>.yml (or use `ledger.py new`).
+# The file name must equal the `name` field. Commit every change: the git
+# history of this directory is the audit trail of the client base.
+
+# Subdomain label and account suffix: acme → acme.ocete.ch, Linux user oct-acme.
+# Lowercase letters, digits, hyphens; must not collide with reserved names
+# (www, dev, demo, mail, api).
+name: acme
+display_name: ACME GmbH
+contact: it@acme.example
+
+# Booked product: team | business | enterprise (→ OCTBASE_EDITION).
+edition: business
+# Jira-CSV-import add-on (→ OCTBASE_OPTION_JIRA_IMPORT). Only honored for
+# the business edition: enterprise always includes the import, team can
+# never activate it.
+jira_import: true
+# Licensed seats (→ OCTBASE_MAX_USERS).
+max_users: 25
+
+registered: 2026-07-10
+# active    — deployed and monitored
+# suspended — kept but must not be (re)deployed; stop the stack manually
+# removed   — offboarded; file kept as historical record
+status: active
+
+# App version stamped into the deployment (→ OCTBASE_APP_VERSION).
+# Falls back to `octbase_version` from group_vars when omitted.
+app_version: "1.0.1"
+
+# Unique host ports (127.0.0.1-bound), allocated by `ledger.py next-ports`:
+# a block of three per client — frontend f, api f+1, postgres f+2.
+ports:
+  frontend: 8110
+  api: 8111
+  postgres: 8112
+
+notes: ""

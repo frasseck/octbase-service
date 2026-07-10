@@ -1,0 +1,52 @@
+# Platform-wide defaults for all Octbase client instances.
+# Per-client values live in ledger/clients/<name>.yml — not here.
+
+# Public base domain; a client "acme" is served at acme.ocete.ch.
+base_domain: ocete.ch
+
+# Path ON THE ADMIN MACHINE to a checkout of the app repo
+# (frasseck/octbase.git) at the release you want to deploy. The create
+# playbook rsyncs it to the client account (like scripts/sync-installs.sh
+# does between dev and demo today).
+octbase_src: "{{ lookup('env', 'HOME') }}/dev.ocete.ch"
+
+# Default OCTBASE_APP_VERSION stamp when a ledger entry has no app_version.
+octbase_version: "1.0.1"
+
+# SMTP relay for outgoing app mail (invitations, notifications). Leaving the
+# host empty makes the API log mail to stdout — set a real relay before
+# onboarding production clients. Put the password in an Ansible Vault file
+# rather than in plain text here.
+smtp_host: ""
+smtp_port: 587
+smtp_from: noreply@beyags.com
+smtp_user: ""
+smtp_pass: ""
+
+# CIDRs whose X-Forwarded-For the API honors (the stack's own frontend Caddy
+# plus the edge proxy). 10.89.0.0/16 is the default rootless-podman network
+# range — verify with `podman network inspect octbase_default` in a client
+# account and tighten if needed.
+octbase_trusted_proxies: "10.89.0.0/16"
+
+# GDPR retention windows (days) applied to every client stack.
+audit_retention_days: 365
+activity_retention_days: 365
+
+# ── Monitoring ────────────────────────────────────────────
+# Mail recipient for state-change alerts ("" disables mail; state changes are
+# always logged to the journal). Requires a working sendmail on the host.
+alert_email: ""
+# Also probe https://<name>.<base_domain>/health through the public edge.
+# Disable while DNS/edge for new clients is still pending.
+edge_probe: true
+
+# ── Conventions (rarely changed) ──────────────────────────
+# Linux account prefix; client "acme" runs as user "oct-acme".
+client_user_prefix: "oct-"
+# Where the app source + .env + data live inside the client account.
+client_app_subdir: octbase
+# Host-side registries maintained by the playbooks.
+edge_snippet_dir: /etc/octbase/edge
+clients_registry_dir: /etc/octbase/clients.d
+backup_dir: /var/backups/octbase

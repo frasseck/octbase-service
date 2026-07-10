@@ -1,0 +1,113 @@
+---
+# Offboard a client instance — DESTRUCTIVE. Requires an explicit confirmation:
+#
+#   ansible-playbook playbooks/remove-instance.yml -e client=acme -e confirm=acme
+#
+# Takes a final backup (pg_dump + attachments + .env) to {{ backup_dir }},
+# then deletes the Linux account with all its data and deregisters the client
+# from monitoring and the edge. Pass -e skip_backup=true to skip the backup
+# (e.g. when the stack is already broken beyond a dump).
+#
+# Afterwards, manually: remove the DNS record, reload the edge proxy, and set
+# status: removed in the ledger file (keep the file as the historical record).
+- name: Remove Octbase client instance
+  hosts: octbase_hosts
+  become: true
+  vars_files:
+    - ../ledger/clients/{{ client }}.yml
+  vars:
+    linux_user: "{{ client_user_prefix }}{{ name }}"
+    home_dir: "/home/{{ linux_user }}"
+    app_dir: "{{ home_dir }}/{{ client_app_subdir }}"
+    fqdn: "{{ name }}.{{ base_domain }}"
+    ts: "{{ ansible_date_time.iso8601_basic_short }}"
+
+  pre_tasks:
+    - name: Require explicit confirmation
+      ansible.builtin.assert:
+        that:
+          - client is defined
+          - confirm is defined
+          - confirm == client
+        fail_msg: "Refusing: pass -e confirm={{ client | default('<name>') }} to really remove this client."
+
+  tasks:
+    - name: Check whether the account exists
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ linux_user }}"
+      register: account
+      failed_when: false
+
+    - name: Account-scoped teardown
+      when: account.ansible_facts is defined
+      vars:
+        client_uid: "{{ account.ansible_facts.getent_passwd[linux_user][1] }}"
+        user_env:
+          XDG_RUNTIME_DIR: "/run/user/{{ account.ansible_facts.getent_passwd[linux_user][1] }}"
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ account.ansible_facts.getent_passwd[linux_user][1] }}/bus"
+      block:
+        - name: Ensure backup directory exists
+          ansible.builtin.file:
+            path: "{{ backup_dir }}"
+            state: directory
+            mode: "0700"
+          when: not (skip_backup | default(false) | bool)
+
+        - name: Final database backup
+          ansible.builtin.shell: >
+            sudo -u {{ linux_user }} XDG_RUNTIME_DIR=/run/user/{{ client_uid }}
+            podman exec octbase_postgres_1 pg_dump -U octbase octbase
+            | gzip > {{ backup_dir }}/{{ name }}-db-{{ ts }}.sql.gz
+          when: not (skip_backup | default(false) | bool)
+
+        - name: Final files backup (attachments + .env)
+          ansible.builtin.shell: >
+            tar czf {{ backup_dir }}/{{ name }}-files-{{ ts }}.tar.gz
+            -C {{ home_dir }} {{ client_app_subdir }}/attachments {{ client_app_subdir }}/.env
+          when: not (skip_backup | default(false) | bool)
+
+        - name: Stop and disable the stack
+          become_user: "{{ linux_user }}"
+          environment: "{{ user_env }}"
+          ansible.builtin.systemd_service:
+            name: octbase
+            scope: user
+            enabled: false
+            state: stopped
+          failed_when: false
+
+        - name: Disable linger
+          ansible.builtin.command: loginctl disable-linger {{ linux_user }}
+          failed_when: false
+
+        - name: Terminate remaining user processes
+          ansible.builtin.command: loginctl terminate-user {{ linux_user }}
+          failed_when: false
+
+        - name: Delete the account and all its data
+          ansible.builtin.user:
+            name: "{{ linux_user }}"
+            state: absent
+            remove: true
+            force: true
+          register: userdel
+          retries: 3
+          delay: 5
+          until: userdel is succeeded
+
+    - name: Deregister from monitoring and edge
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ clients_registry_dir }}/{{ name }}.conf"
+        - "{{ edge_snippet_dir }}/{{ name }}.caddy"
+
+    - name: Manual follow-up steps
+      ansible.builtin.debug:
+        msg:
+          - "Client {{ name }} removed{{ '' if (skip_backup | default(false) | bool) else '; final backup in ' + backup_dir }}."
+          - "1) DNS (manual): delete the {{ fqdn }} record."
+          - "2) Edge proxy: reload it (its {{ name }}.caddy snippet is gone)."
+          - "3) Ledger: set status: removed in ledger/clients/{{ name }}.yml and commit."

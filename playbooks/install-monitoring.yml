@@ -1,0 +1,69 @@
+---
+# Install / update the fleet monitor on the production host:
+#
+#   ansible-playbook playbooks/install-monitoring.yml
+#
+# Deploys the app repo's check-health.sh + this repo's monitor-all.sh and a
+# systemd timer that probes every registered client (clients.d/*.conf) every
+# 5 minutes. Alerting is configured via alert_email / edge_probe in
+# inventory/group_vars/all.yml.
+- name: Install Octbase fleet monitoring
+  hosts: octbase_hosts
+  become: true
+
+  tasks:
+    - name: Create directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /usr/local/lib/octbase
+        - /etc/octbase
+        - "{{ clients_registry_dir }}"
+        - /var/lib/octbase-monitor
+
+    - name: Install check-health.sh (from the app repo checkout)
+      ansible.builtin.copy:
+        src: "{{ octbase_src }}/octbase-operations/check-health.sh"
+        dest: /usr/local/lib/octbase/check-health.sh
+        mode: "0755"
+
+    - name: Install monitor-all.sh
+      ansible.builtin.copy:
+        src: ../monitoring/monitor-all.sh
+        dest: /usr/local/lib/octbase/monitor-all.sh
+        mode: "0755"
+
+    - name: Write monitor configuration
+      ansible.builtin.copy:
+        dest: /etc/octbase/monitor.conf
+        mode: "0644"
+        content: |
+          # Managed by octbase-operation / install-monitoring.yml
+          ALERT_EMAIL={{ alert_email }}
+          EDGE_PROBE={{ '1' if (edge_probe | bool) else '0' }}
+
+    - name: Install systemd units
+      ansible.builtin.copy:
+        src: "../monitoring/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - octbase-monitor.service
+        - octbase-monitor.timer
+      register: units
+
+    - name: Enable and start the timer
+      ansible.builtin.systemd_service:
+        name: octbase-monitor.timer
+        daemon_reload: "{{ units.changed }}"
+        enabled: true
+        state: started
+
+    - name: Usage hints
+      ansible.builtin.debug:
+        msg:
+          - "Fleet status file: /var/lib/octbase-monitor/status.json"
+          - "Ad-hoc check:      sudo /usr/local/lib/octbase/monitor-all.sh --print"
+          - "History:           journalctl -u octbase-monitor.service"

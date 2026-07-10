@@ -1,0 +1,217 @@
+---
+# Create — or update — one Octbase client instance from its ledger entry.
+#
+#   ansible-playbook playbooks/create-instance.yml -e client=acme
+#
+# Idempotent: on an existing instance it re-syncs the app source, re-applies
+# the ledger-managed settings (edition, add-on, seats, version) and restarts
+# the stack only if something changed. Secrets and data are never touched
+# after the first run.
+- name: Create / update Octbase client instance
+  hosts: octbase_hosts
+  become: true
+  vars_files:
+    - ../ledger/clients/{{ client }}.yml
+  vars:
+    linux_user: "{{ client_user_prefix }}{{ name }}"
+    home_dir: "/home/{{ linux_user }}"
+    app_dir: "{{ home_dir }}/{{ client_app_subdir }}"
+    fqdn: "{{ name }}.{{ base_domain }}"
+
+  pre_tasks:
+    - name: Validate ledger entry
+      ansible.builtin.assert:
+        that:
+          - client is defined
+          - name == client
+          - name is match('^[a-z][a-z0-9-]{1,29}$')
+          - name not in ['www', 'dev', 'demo', 'mail', 'api', 'octbase', 'admin']
+          - edition | lower in ['team', 'business', 'enterprise']
+          - not ((jira_import | default(false)) and edition | lower == 'team')
+          - max_users | int >= 1
+          - ports.frontend is defined and ports.api is defined and ports.postgres is defined
+          - status == 'active'
+        fail_msg: >-
+          Ledger entry for '{{ client | default('?') }}' is invalid or not
+          'active' — run ./ledger/ledger.py validate.
+
+    # Generated on the admin machine; only used the first time the .env is
+    # written (the template task below never overwrites an existing file).
+    - name: Generate initial secrets
+      ansible.builtin.set_fact:
+        gen_jwt_secret: "{{ lookup('pipe', 'openssl rand -base64 32') }}"
+        gen_scm_key: "{{ lookup('pipe', 'openssl rand -base64 32') }}"
+        gen_mfa_key: "{{ lookup('pipe', 'openssl rand -base64 32') }}"
+        gen_pg_password: "{{ lookup('pipe', 'openssl rand -hex 16') }}"
+      no_log: true
+
+  tasks:
+    - name: Create client Linux account
+      ansible.builtin.user:
+        name: "{{ linux_user }}"
+        comment: "Octbase client {{ display_name | default(name) }}"
+        shell: /bin/bash
+        create_home: true
+      register: client_account
+
+    - name: Set client account facts
+      ansible.builtin.set_fact:
+        client_uid: "{{ client_account.uid }}"
+        user_env:
+          XDG_RUNTIME_DIR: "/run/user/{{ client_account.uid }}"
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ client_account.uid }}/bus"
+
+    # Linger keeps the user's systemd instance (and thus the stack) running
+    # without a login session, and starts it at boot.
+    - name: Enable systemd linger
+      ansible.builtin.command: loginctl enable-linger {{ linux_user }}
+      args:
+        creates: /var/lib/systemd/linger/{{ linux_user }}
+
+    - name: Restrict home directory
+      ansible.builtin.file:
+        path: "{{ home_dir }}"
+        mode: "0750"
+
+    - name: Sync application source from admin machine
+      ansible.posix.synchronize:
+        src: "{{ octbase_src }}/"
+        dest: "{{ app_dir }}/"
+        archive: true
+        delete: false
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=.env"
+          - "--exclude=pgdata*"
+          - "--exclude=attachments"
+          - "--exclude=.pytest_cache"
+          - "--exclude=node_modules"
+          - "--chown={{ linux_user }}:{{ linux_user }}"
+      notify: Restart stack
+
+    - name: Install production compose override
+      ansible.builtin.copy:
+        src: podman-compose.client.yml
+        dest: "{{ app_dir }}/podman-compose.client.yml"
+        owner: "{{ linux_user }}"
+        group: "{{ linux_user }}"
+        mode: "0644"
+      notify: Restart stack
+
+    - name: Create attachments directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}/attachments"
+        state: directory
+        owner: "{{ linux_user }}"
+        group: "{{ linux_user }}"
+        mode: "0700"
+
+    - name: Write .env (first deploy only — holds the generated secrets)
+      ansible.builtin.template:
+        src: env.j2
+        dest: "{{ app_dir }}/.env"
+        owner: "{{ linux_user }}"
+        group: "{{ linux_user }}"
+        mode: "0600"
+        force: false
+      no_log: true
+
+    - name: Sync ledger-managed settings into .env
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/.env"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop:
+        - { key: OCTBASE_EDITION, value: "{{ edition | upper }}" }
+        - { key: OCTBASE_OPTION_JIRA_IMPORT, value: "{{ 'true' if (jira_import | default(false)) else 'false' }}" }
+        - { key: OCTBASE_MAX_USERS, value: "{{ max_users }}" }
+        - { key: OCTBASE_APP_VERSION, value: "{{ app_version | default(octbase_version) }}" }
+      notify: Restart stack
+
+    - name: Build container images (first run takes several minutes)
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.command:
+        cmd: podman-compose -f podman-compose.yml -f podman-compose.client.yml build
+        chdir: "{{ app_dir }}"
+      changed_when: false
+      timeout: 3600
+
+    - name: Ensure systemd user dir exists
+      ansible.builtin.file:
+        path: "{{ home_dir }}/.config/systemd/user"
+        state: directory
+        owner: "{{ linux_user }}"
+        group: "{{ linux_user }}"
+        mode: "0755"
+
+    - name: Install systemd user unit
+      ansible.builtin.template:
+        src: octbase.service.j2
+        dest: "{{ home_dir }}/.config/systemd/user/octbase.service"
+        owner: "{{ linux_user }}"
+        group: "{{ linux_user }}"
+        mode: "0644"
+      notify: Restart stack
+
+    - name: Enable and start the stack
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.systemd_service:
+        name: octbase
+        scope: user
+        daemon_reload: true
+        enabled: true
+        state: started
+
+    - name: Flush handlers (apply pending restart before health check)
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for API health
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ ports.api }}/health"
+        status_code: 200
+      register: health
+      retries: 30
+      delay: 5
+      until: health.status == 200
+
+    - name: Ensure registry/edge dirs exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ clients_registry_dir }}"
+        - "{{ edge_snippet_dir }}"
+
+    - name: Register client for monitoring
+      ansible.builtin.template:
+        src: client-registry.conf.j2
+        dest: "{{ clients_registry_dir }}/{{ name }}.conf"
+        mode: "0644"
+
+    - name: Write edge proxy vhost snippet
+      ansible.builtin.template:
+        src: caddy-vhost.j2
+        dest: "{{ edge_snippet_dir }}/{{ name }}.caddy"
+        mode: "0644"
+
+    - name: Manual follow-up steps
+      ansible.builtin.debug:
+        msg:
+          - "Instance {{ fqdn }} is up (API /health 200 on 127.0.0.1:{{ ports.api }})."
+          - "1) DNS (manual): create A/AAAA record {{ fqdn }} -> this host."
+          - "2) Edge proxy: snippet written to {{ edge_snippet_dir }}/{{ name }}.caddy —"
+          - "   ensure the edge Caddyfile has 'import {{ edge_snippet_dir }}/*.caddy', then reload it."
+          - "3) Verify: curl -s https://{{ fqdn }}/health"
+
+  handlers:
+    - name: Restart stack
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.systemd_service:
+        name: octbase
+        scope: user
+        daemon_reload: true
+        state: restarted

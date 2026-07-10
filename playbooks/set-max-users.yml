@@ -1,0 +1,73 @@
+---
+# Set OCTBASE_MAX_USERS for one client and restart its stack.
+#
+# The value comes from the ledger (edit max_users there, commit, then run):
+#   ansible-playbook playbooks/set-max-users.yml -e client=acme
+#
+# An extra-var overrides the ledger for ad-hoc changes (update the ledger
+# afterwards — it must stay the source of truth):
+#   ansible-playbook playbooks/set-max-users.yml -e client=acme -e max_users=40
+- name: Set OCTBASE_MAX_USERS
+  hosts: octbase_hosts
+  become: true
+  vars_files:
+    - ../ledger/clients/{{ client }}.yml
+  vars:
+    linux_user: "{{ client_user_prefix }}{{ name }}"
+    app_dir: "/home/{{ linux_user }}/{{ client_app_subdir }}"
+
+  pre_tasks:
+    - name: Validate
+      ansible.builtin.assert:
+        that:
+          - client is defined
+          - name == client
+          - max_users | int >= 1
+        fail_msg: "max_users must be a positive integer"
+
+  tasks:
+    - name: Look up the client account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ linux_user }}"
+
+    - name: Set user session env
+      ansible.builtin.set_fact:
+        user_env:
+          XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[linux_user][1] }}"
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[linux_user][1] }}/bus"
+
+    - name: Update OCTBASE_MAX_USERS in .env
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/.env"
+        regexp: "^OCTBASE_MAX_USERS="
+        line: "OCTBASE_MAX_USERS={{ max_users }}"
+      register: envchange
+
+    # Restart (down+up) recreates the containers so the env change actually
+    # reaches the API — a plain container restart would keep the old env.
+    - name: Restart the stack
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.systemd_service:
+        name: octbase
+        scope: user
+        state: restarted
+      when: envchange.changed
+
+    - name: Wait for API health
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ ports.api }}/health"
+        status_code: 200
+      register: health
+      retries: 30
+      delay: 5
+      until: health.status == 200
+
+    - name: Result
+      ansible.builtin.debug:
+        msg: >-
+          {{ name }}: OCTBASE_MAX_USERS={{ max_users }}
+          ({{ 'stack restarted' if envchange.changed else 'value already set — no restart' }}).
+          If you overrode the ledger with -e max_users, update
+          ledger/clients/{{ name }}.yml now and commit.

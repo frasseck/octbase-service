@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Octbase stack for {{ fqdn }} (podman-compose)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ app_dir }}
+ExecStart=/usr/bin/podman-compose -f podman-compose.yml -f podman-compose.client.yml up -d
+ExecStop=/usr/bin/podman-compose -f podman-compose.yml -f podman-compose.client.yml down
+TimeoutStartSec=600
+
+[Install]
+WantedBy=default.target

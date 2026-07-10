@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Octbase fleet health monitor every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target

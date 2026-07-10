@@ -1,0 +1,9 @@
+[Unit]
+Description=Octbase fleet health monitor (all client stacks)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/octbase/monitor-all.sh
+# The monitor's exit code reflects fleet state (1 degraded / 2 down) — that is
+# a report, not a unit failure.
+SuccessExitStatus=1 2

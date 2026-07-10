@@ -1,0 +1,37 @@
+# Production override for client instances — always layered on top of the app
+# repo's podman-compose.yml:
+#
+#   podman-compose -f podman-compose.yml -f podman-compose.client.yml up -d
+#
+# The base file is tuned for local development: it hardcodes demo mode ON and
+# a localhost CORS origin, and does not pass the edition/seat/add-on variables
+# into the API container at all. This override makes a stack production-safe
+# and wires every ledger-managed variable through from .env.
+services:
+  octbase-api:
+    environment:
+      # Production hardening — the API refuses to start without a strong JWT
+      # secret once demo mode is off.
+      OCTBASE_DEMO_MODE: "false"
+      OCTBASE_SECURE_COOKIES: "true"
+      OCTBASE_CORS_ORIGIN: "${OCTBASE_CORS_ORIGIN}"
+      OCTBASE_JWT_ACCESS_TTL: "${OCTBASE_JWT_ACCESS_TTL:-15m}"
+      OCTBASE_JWT_REFRESH_TTL: "${OCTBASE_JWT_REFRESH_TTL:-1h}"
+      OCTBASE_LOG_LEVEL: "${OCTBASE_LOG_LEVEL:-info}"
+      # Commercial configuration from the ledger.
+      OCTBASE_EDITION: "${OCTBASE_EDITION:-ENTERPRISE}"
+      OCTBASE_OPTION_JIRA_IMPORT: "${OCTBASE_OPTION_JIRA_IMPORT:-false}"
+      OCTBASE_MAX_USERS: "${OCTBASE_MAX_USERS:-}"
+      # GDPR retention.
+      OCTBASE_AUDIT_RETENTION_DAYS: "${OCTBASE_AUDIT_RETENTION_DAYS:-365}"
+      OCTBASE_ACTIVITY_RETENTION_DAYS: "${OCTBASE_ACTIVITY_RETENTION_DAYS:-365}"
+      # Webhook HMAC secrets (set in .env when the client books SCM webhooks).
+      OCTBASE_WEBHOOK_SECRET_GITHUB: "${OCTBASE_WEBHOOK_SECRET_GITHUB:-}"
+      OCTBASE_WEBHOOK_SECRET_BITBUCKET: "${OCTBASE_WEBHOOK_SECRET_BITBUCKET:-}"
+      # Attachments: persistent host path (mounted below) instead of the
+      # container filesystem, where uploads would die with the container.
+      OCTBASE_ATTACHMENTS_DIR: /data/attachments
+      OCTBASE_MAX_UPLOAD_MB: "${OCTBASE_MAX_UPLOAD_MB:-25}"
+      OCTBASE_FEATURE_TASKVIEW: "${OCTBASE_FEATURE_TASKVIEW:-true}"
+    volumes:
+      - ./attachments:/data/attachments:U
