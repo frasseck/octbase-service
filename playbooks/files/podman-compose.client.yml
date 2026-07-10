@@ -4,9 +4,11 @@
 #   podman-compose -f podman-compose.yml -f podman-compose.client.yml up -d
 #
 # The base file is tuned for local development: it hardcodes demo mode ON and
-# a localhost CORS origin, and does not pass the edition/seat/add-on variables
-# into the API container at all. This override makes a stack production-safe
-# and wires every ledger-managed variable through from .env.
+# a localhost CORS origin, and does not pass the edition/add-on variables into
+# the API container at all (seat/upload limits pass through as of app
+# release_v14, but with fail-open blank defaults). This override makes a stack
+# production-safe and wires every ledger-managed variable through from .env
+# with fail-closed defaults.
 services:
   octbase-api:
     environment:
@@ -33,7 +35,10 @@ services:
       # Attachments: persistent host path (mounted below) instead of the
       # container filesystem, where uploads would die with the container.
       OCTBASE_ATTACHMENTS_DIR: /data/attachments
-      OCTBASE_MAX_UPLOAD_MB: "${OCTBASE_MAX_UPLOAD_MB:-25}"
+      # Upload limits — defaults match the product defaults (10 MB per file,
+      # 512 MB = 0.5 GB storage per user); 0 disables a limit.
+      OCTBASE_MAX_UPLOAD_MB: "${OCTBASE_MAX_UPLOAD_MB:-10}"
+      OCTBASE_MAX_USER_STORAGE_MB: "${OCTBASE_MAX_USER_STORAGE_MB:-512}"
       OCTBASE_FEATURE_TASKVIEW: "${OCTBASE_FEATURE_TASKVIEW:-true}"
     volumes:
       - ./attachments:/data/attachments:U
