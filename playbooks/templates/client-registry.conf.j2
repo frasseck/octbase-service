@@ -4,3 +4,7 @@ USER_ACCT={{ linux_user }}
 DOMAIN={{ fqdn }}
 FRONTEND_PORT={{ ports.frontend }}
 API_PORT={{ ports.api }}
+{% if monitor_edge_probe is defined %}
+# Per-client override of the global edge_probe (ledger: monitor_edge_probe).
+EDGE_PROBE={{ '1' if (monitor_edge_probe | bool) else '0' }}
+{% endif %}

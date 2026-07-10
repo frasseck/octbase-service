@@ -32,6 +32,15 @@
         fail_msg: "Refusing: pass -e confirm={{ client | default('<name>') }} to really remove this client."
 
   tasks:
+    # First, so a monitor run during the teardown window doesn't fire a
+    # spurious DOWN alert for a client we are deliberately removing. (If the
+    # play aborts later, e.g. on a failed backup, re-run create-instance.yml
+    # or this play to restore/finish — until then the client is unmonitored.)
+    - name: Deregister from monitoring
+      ansible.builtin.file:
+        path: "{{ clients_registry_dir }}/{{ name }}.conf"
+        state: absent
+
     - name: Check whether the account exists
       ansible.builtin.getent:
         database: passwd
@@ -54,17 +63,37 @@
             mode: "0700"
           when: not (skip_backup | default(false) | bool)
 
+        # pipefail is essential: without it the pipeline's exit code is gzip's,
+        # and a dead postgres container would yield an empty "successful"
+        # backup right before the account (and the only data copy) is deleted.
         - name: Final database backup
-          ansible.builtin.shell: >
-            sudo -u {{ linux_user }} XDG_RUNTIME_DIR=/run/user/{{ client_uid }}
-            podman exec octbase_postgres_1 pg_dump -U octbase octbase
-            | gzip > {{ backup_dir }}/{{ name }}-db-{{ ts }}.sql.gz
+          ansible.builtin.shell: |
+            set -euo pipefail
+            sudo -u {{ linux_user }} XDG_RUNTIME_DIR=/run/user/{{ client_uid }} \
+              podman exec octbase_postgres_1 pg_dump -U octbase octbase \
+              | gzip > {{ backup_dir }}/{{ name }}-db-{{ ts }}.sql.gz
+          args:
+            executable: /bin/bash
+          when: not (skip_backup | default(false) | bool)
+
+        - name: Verify database backup is a complete dump
+          ansible.builtin.shell: |
+            set -euo pipefail
+            gunzip -t {{ backup_dir }}/{{ name }}-db-{{ ts }}.sql.gz
+            gunzip -c {{ backup_dir }}/{{ name }}-db-{{ ts }}.sql.gz \
+              | tail -n 20 | grep -q 'PostgreSQL database dump complete'
+          args:
+            executable: /bin/bash
+          changed_when: false
           when: not (skip_backup | default(false) | bool)
 
         - name: Final files backup (attachments + .env)
-          ansible.builtin.shell: >
-            tar czf {{ backup_dir }}/{{ name }}-files-{{ ts }}.tar.gz
-            -C {{ home_dir }} {{ client_app_subdir }}/attachments {{ client_app_subdir }}/.env
+          ansible.builtin.shell: |
+            set -euo pipefail
+            tar czf {{ backup_dir }}/{{ name }}-files-{{ ts }}.tar.gz \
+              -C {{ home_dir }} {{ client_app_subdir }}/attachments {{ client_app_subdir }}/.env
+          args:
+            executable: /bin/bash
           when: not (skip_backup | default(false) | bool)
 
         - name: Stop and disable the stack
@@ -96,13 +125,10 @@
           delay: 5
           until: userdel is succeeded
 
-    - name: Deregister from monitoring and edge
+    - name: Remove edge vhost snippet
       ansible.builtin.file:
-        path: "{{ item }}"
+        path: "{{ edge_snippet_dir }}/{{ name }}.caddy"
         state: absent
-      loop:
-        - "{{ clients_registry_dir }}/{{ name }}.conf"
-        - "{{ edge_snippet_dir }}/{{ name }}.caddy"
 
     - name: Manual follow-up steps
       ansible.builtin.debug:

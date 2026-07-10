@@ -37,8 +37,9 @@ activity_retention_days: 365
 # Mail recipient for state-change alerts ("" disables mail; state changes are
 # always logged to the journal). Requires a working sendmail on the host.
 alert_email: ""
-# Also probe https://<name>.<base_domain>/health through the public edge.
-# Disable while DNS/edge for new clients is still pending.
+# Also probe https://<name>.<base_domain>/health through the public edge
+# (global default; a client whose DNS/edge is still pending can opt out via
+# monitor_edge_probe: false in its ledger file).
 edge_probe: true
 
 # ── Conventions (rarely changed) ──────────────────────────

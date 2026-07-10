@@ -18,10 +18,12 @@ services:
       OCTBASE_JWT_ACCESS_TTL: "${OCTBASE_JWT_ACCESS_TTL:-15m}"
       OCTBASE_JWT_REFRESH_TTL: "${OCTBASE_JWT_REFRESH_TTL:-1h}"
       OCTBASE_LOG_LEVEL: "${OCTBASE_LOG_LEVEL:-info}"
-      # Commercial configuration from the ledger.
-      OCTBASE_EDITION: "${OCTBASE_EDITION:-ENTERPRISE}"
+      # Commercial configuration from the ledger. Defaults fail CLOSED: a
+      # missing .env key must never grant a higher edition or more seats
+      # than the client booked.
+      OCTBASE_EDITION: "${OCTBASE_EDITION:-TEAM}"
       OCTBASE_OPTION_JIRA_IMPORT: "${OCTBASE_OPTION_JIRA_IMPORT:-false}"
-      OCTBASE_MAX_USERS: "${OCTBASE_MAX_USERS:-}"
+      OCTBASE_MAX_USERS: "${OCTBASE_MAX_USERS:-1}"
       # GDPR retention.
       OCTBASE_AUDIT_RETENTION_DAYS: "${OCTBASE_AUDIT_RETENTION_DAYS:-365}"
       OCTBASE_ACTIVITY_RETENTION_DAYS: "${OCTBASE_ACTIVITY_RETENTION_DAYS:-365}"

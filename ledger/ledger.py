@@ -25,7 +25,9 @@ except ImportError:
 
 CLIENTS_DIR = Path(__file__).resolve().parent / "clients"
 
-NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,29}$")
+# Max 28 chars: the Linux account is "oct-<name>" and useradd caps
+# usernames at 32 characters.
+NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,27}$")
 RESERVED_NAMES = {"www", "dev", "demo", "mail", "api", "octbase", "admin"}
 EDITIONS = {"team", "business", "enterprise"}
 STATUSES = {"active", "suspended", "removed"}
@@ -137,6 +139,8 @@ def cmd_validate(_args):
             errors.append(f"{where}: the jira_import add-on cannot be booked for team")
         if c.get("jira_import") and c.get("edition") == "enterprise":
             warnings.append(f"{where}: jira_import is redundant — enterprise includes it")
+        if "monitor_edge_probe" in c and not isinstance(c["monitor_edge_probe"], bool):
+            errors.append(f"{where}: monitor_edge_probe must be true or false")
         ports = c.get("ports") or {}
         if set(ports) != {"frontend", "api", "postgres"}:
             errors.append(f"{where}: ports must define frontend, api and postgres")

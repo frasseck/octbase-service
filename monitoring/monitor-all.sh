@@ -54,8 +54,13 @@ if [ ${#confs[@]} -eq 0 ]; then
   echo "no clients registered in $REGISTRY" >&2
 fi
 
+# Registry confs may override EDGE_PROBE per client (e.g. while a new
+# client's DNS/edge setup is still pending) — remember the global default.
+GLOBAL_EDGE_PROBE="$EDGE_PROBE"
+
 for f in "${confs[@]}"; do
   NAME="" USER_ACCT="" DOMAIN="" FRONTEND_PORT="" API_PORT=""
+  EDGE_PROBE="$GLOBAL_EDGE_PROBE"
   . "$f"
   [ -n "$NAME" ] && [ -n "$USER_ACCT" ] || continue
 
@@ -74,7 +79,9 @@ for f in "${confs[@]}"; do
     esac
     # Edge probe: the same /health, but through DNS + edge proxy + TLS.
     if [ "$EDGE_PROBE" = 1 ] && [ -n "$DOMAIN" ]; then
-      code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/health" 2>/dev/null || echo 000)"
+      # NB: no "|| echo 000" inside the substitution — a failing curl still
+      # prints its -w output, which would yield a two-line value.
+      code="$(curl -so /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/health" 2>/dev/null)" || code=000
       if [ "$code" = "200" ]; then
         detail="$detail; edge 200"
       else
@@ -88,18 +95,24 @@ for f in "${confs[@]}"; do
   overall="$(worse "$overall" "$state")"
   case $state in DEGRADED) [ $exit_code -lt 1 ] && exit_code=1 ;; DOWN) exit_code=2 ;; esac
 
+  # Unseen clients count as previously OK: a client that is already broken
+  # the first time it is observed must alert too, not stay silently down.
   prev="$(grep "^$NAME=" "$LAST_FILE" 2>/dev/null | cut -d= -f2)"
-  if [ -n "$prev" ] && [ "$prev" != "$state" ]; then
+  prev="${prev:-OK}"
+  if [ "$prev" != "$state" ]; then
     changes="${changes}${NAME}: ${prev} -> ${state} (${detail})\n"
   fi
 
+  detail="${detail//$'\n'/ }"   # keep status.json single-line-safe
   [ -n "$json_clients" ] && json_clients="$json_clients,"
   json_clients="$json_clients\"$NAME\":{\"state\":\"$state\",\"detail\":\"${detail//\"/\'}\"}"
   [ $PRINT -eq 1 ] && printf '%-12s %-9s %s\n' "$NAME" "$state" "$detail"
 done
 
+# Write-then-rename: readers of status.json must never see a partial file.
 printf '{"overall":"%s","ts":"%s","clients":{%s}}\n' \
-  "$overall" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$json_clients" > "$STATUS_FILE"
+  "$overall" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$json_clients" > "$STATUS_FILE.new"
+mv "$STATUS_FILE.new" "$STATUS_FILE"
 
 : > "$LAST_FILE.new"
 for n in "${!new_states[@]}"; do echo "$n=${new_states[$n]}" >> "$LAST_FILE.new"; done

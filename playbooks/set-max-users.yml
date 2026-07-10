@@ -44,8 +44,24 @@
         line: "OCTBASE_MAX_USERS={{ max_users }}"
       register: envchange
 
+    # Don't trust the file edit alone: if a previous run died between the
+    # .env change and the restart, the file already matches but the container
+    # still runs the old value. Ask the running API container instead.
+    - name: Read OCTBASE_MAX_USERS from the running API container
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.shell: >
+        podman exec
+        "$(podman ps -q --filter label=com.docker.compose.service=octbase-api | head -n1)"
+        printenv OCTBASE_MAX_USERS
+      register: running_max_users
+      changed_when: false
+      failed_when: false
+
     # Restart (down+up) recreates the containers so the env change actually
     # reaches the API — a plain container restart would keep the old env.
+    # Also restarts when the container is unreadable/down (rc != 0): the
+    # health check below then verifies the stack came back.
     - name: Restart the stack
       become_user: "{{ linux_user }}"
       environment: "{{ user_env }}"
@@ -53,7 +69,11 @@
         name: octbase
         scope: user
         state: restarted
-      when: envchange.changed
+      when: >-
+        envchange.changed
+        or running_max_users.rc != 0
+        or (running_max_users.stdout | trim) != (max_users | string)
+      register: restart
 
     - name: Wait for API health
       ansible.builtin.uri:
@@ -68,6 +88,6 @@
       ansible.builtin.debug:
         msg: >-
           {{ name }}: OCTBASE_MAX_USERS={{ max_users }}
-          ({{ 'stack restarted' if envchange.changed else 'value already set — no restart' }}).
+          ({{ 'stack restarted' if restart is not skipped else 'value already live in the container — no restart' }}).
           If you overrode the ledger with -e max_users, update
           ledger/clients/{{ name }}.yml now and commit.

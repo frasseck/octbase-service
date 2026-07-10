@@ -130,7 +130,10 @@ Verify: `curl -s https://acme.ocete.ch/health` → `{"status":"ok",…}`.
 
 Edit the ledger file, commit, and re-run the create playbook — it is
 idempotent and re-applies the ledger-managed settings without touching
-secrets or data:
+secrets or data. Platform-wide values from `inventory/group_vars/all.yml`
+(SMTP relay, trusted proxies, retention days) are re-synced into the client's
+`.env` on the same run — so after changing one of those, re-run the playbook
+for **every** active client:
 
 ```bash
 ansible-playbook playbooks/create-instance.yml -e client=acme
@@ -195,6 +198,11 @@ What it does on the host:
   the journal: `journalctl -u octbase-monitor.service`.
 
 Ad-hoc fleet status: `sudo /usr/local/lib/octbase/monitor-all.sh --print`.
+
+The public-edge probe can be disabled per client while its DNS/edge setup is
+still pending: set `monitor_edge_probe: false` in the client's ledger file and
+re-run `create-instance.yml` (remove the field and re-run once the client is
+live). The global default is `edge_probe` in `inventory/group_vars/all.yml`.
 
 For external ("is the site reachable at all") coverage, point any uptime
 service at `https://<name>.ocete.ch/health` — the same endpoint the monitor

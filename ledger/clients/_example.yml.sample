@@ -3,7 +3,8 @@
 # history of this directory is the audit trail of the client base.
 
 # Subdomain label and account suffix: acme → acme.ocete.ch, Linux user oct-acme.
-# Lowercase letters, digits, hyphens; must not collide with reserved names
+# Lowercase letters, digits, hyphens, max 28 chars ("oct-" + name must fit
+# useradd's 32-char username limit); must not collide with reserved names
 # (www, dev, demo, mail, api).
 name: acme
 display_name: ACME GmbH
@@ -34,5 +35,10 @@ ports:
   frontend: 8110
   api: 8111
   postgres: 8112
+
+# Optional: set to false to skip the monitor's public-edge probe for this
+# client (e.g. while DNS / edge config is still pending). Omit to follow the
+# global edge_probe from group_vars. Re-run create-instance.yml to apply.
+# monitor_edge_probe: false
 
 notes: ""

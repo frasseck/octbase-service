@@ -24,7 +24,7 @@
         that:
           - client is defined
           - name == client
-          - name is match('^[a-z][a-z0-9-]{1,29}$')
+          - name is match('^[a-z][a-z0-9-]{1,27}$')
           - name not in ['www', 'dev', 'demo', 'mail', 'api', 'octbase', 'admin']
           - edition | lower in ['team', 'business', 'enterprise']
           - not ((jira_import | default(false)) and edition | lower == 'team')
@@ -126,6 +126,32 @@
         - { key: OCTBASE_OPTION_JIRA_IMPORT, value: "{{ 'true' if (jira_import | default(false)) else 'false' }}" }
         - { key: OCTBASE_MAX_USERS, value: "{{ max_users }}" }
         - { key: OCTBASE_APP_VERSION, value: "{{ app_version | default(octbase_version) }}" }
+      notify: Restart stack
+
+    # Platform-wide values from group_vars would otherwise only ever reach a
+    # client on its FIRST deploy (the .env template is never overwritten) —
+    # changing e.g. the SMTP relay must propagate to existing clients too.
+    - name: Sync platform-managed settings into .env
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/.env"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop:
+        - { key: OCTBASE_TRUSTED_PROXIES, value: "{{ octbase_trusted_proxies }}" }
+        - { key: OCTBASE_SMTP_HOST, value: "{{ smtp_host }}" }
+        - { key: OCTBASE_SMTP_PORT, value: "{{ smtp_port }}" }
+        - { key: OCTBASE_SMTP_FROM, value: "{{ smtp_from }}" }
+        - { key: OCTBASE_SMTP_USER, value: "{{ smtp_user }}" }
+        - { key: OCTBASE_AUDIT_RETENTION_DAYS, value: "{{ audit_retention_days }}" }
+        - { key: OCTBASE_ACTIVITY_RETENTION_DAYS, value: "{{ activity_retention_days }}" }
+      notify: Restart stack
+
+    - name: Sync SMTP password into .env
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/.env"
+        regexp: "^OCTBASE_SMTP_PASS="
+        line: "OCTBASE_SMTP_PASS={{ smtp_pass }}"
+      no_log: true
       notify: Restart stack
 
     - name: Build container images (first run takes several minutes)
