@@ -1,4 +1,4 @@
-# octbase-operation
+# octbase-service
 
 Operations toolkit for running **one Octbase stack per client** on the ocete.ch
 production host. It implements the stack-per-tenant model recommended in the
@@ -53,6 +53,9 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `playbooks/files/podman-compose.client.yml` | Production compose override (see below) |
 | `monitoring/monitor-all.sh` | Root-level aggregator that probes every client stack |
 | `monitoring/octbase-monitor.{service,timer}` | systemd units for the 5-minute monitor run |
+| `backup/backup-octbase.sh` | Daily DB backup with an automated restore test |
+| `backup/octbase-backup.{service,timer}` | systemd user units for the nightly backup run |
+| `docs/security-data-protection-concept.md` | Security & data-protection concept (standards mapping, open items) |
 
 ## Prerequisites
 
@@ -158,9 +161,15 @@ The playbook updates the client's `.env`, restarts the stack (brief downtime,
 containers are recreated so the env change takes effect) and re-checks
 `/health`.
 
-> Note: as of 2026-07-10 the API does not yet read `OCTBASE_MAX_USERS` — the
-> variable is plumbed through `.env` and the compose override into the API
-> container, so enforcement activates automatically once the API implements it.
+> Note: the API enforces `OCTBASE_MAX_USERS` as of app release_v14 (403
+> `USER_LIMIT_REACHED` on user creation and invitation create/accept; every
+> non-deleted account counts, including the admin). Unset, the app defaults to
+> 5; the compose override's fail-closed default is 1, so the ledger value must
+> reach `.env`. The same release adds two upload limits with product defaults
+> baked into `env.j2`: `OCTBASE_MAX_UPLOAD_MB` (10 MB per file) and
+> `OCTBASE_MAX_USER_STORAGE_MB` (512 MB stored per user); edit a client's
+> `.env` and restart for one-off deals — they are deliberately not
+> ledger-managed.
 
 ### Offboard a client
 
@@ -239,15 +248,25 @@ with both files.
 - Blast radius per client = one Linux account: distinct user namespaces,
   distinct DBs, per-service resource limits from the base compose file.
 
+## Security & data protection
+
+See [`docs/security-data-protection-concept.md`](docs/security-data-protection-concept.md)
+for the platform's security and data-protection concept: the implemented
+technical measures mapped to the RiLi-Webservices and the Kanton Zürich
+"Sichere Website" guidance, the backup/restore and MFA-enforcement concepts,
+and the open organizational items (AV contracts, VVT, pentest, edge
+restriction).
+
 ## Known gaps / next steps
 
-- **Backups**: `remove-instance.yml` takes a final backup, but there is no
-  scheduled per-client backup yet. Next step: a nightly timer doing
-  `pg_dump` + attachments rsync per client (hosting-concept §9.5).
+- **Backups**: host-level DB backups with an automated restore test now run
+  nightly (`backup/`, systemd timer `octbase-backup.timer` at 03:30; dumps in
+  `/home/claude/backups`). Still open: fold this into the per-client model
+  (attachments rsync + an off-host/immutable copy, hosting-concept §9.5) and
+  wire it into the Ansible playbooks per tenant.
 - **Image builds**: each client account builds its own images from the synced
   source (~identical work per client). At ~10+ clients, build once and
   distribute via a registry or `podman save|load`.
 - **Suspend**: `status: suspended` is tracked in the ledger and blocks
   `create-instance.yml`, but there is no playbook yet that stops a running
   stack without removing it (`systemctl --user stop octbase` manually).
-- `OCTBASE_MAX_USERS` enforcement in the API (see above).

@@ -40,7 +40,7 @@
         dest: /etc/octbase/monitor.conf
         mode: "0644"
         content: |
-          # Managed by octbase-operation / install-monitoring.yml
+          # Managed by octbase-service / install-monitoring.yml
           ALERT_EMAIL={{ alert_email }}
           EDGE_PROBE={{ '1' if (edge_probe | bool) else '0' }}
 

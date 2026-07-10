@@ -1,0 +1,9 @@
+[Unit]
+Description=Octbase database backup with restore verification
+Documentation=file:/home/claude/octbase-service/backup/backup-octbase.sh
+
+[Service]
+Type=oneshot
+ExecStart=/home/claude/octbase-service/backup/backup-octbase.sh
+# Give the dump + restore-test room; the throwaway PG needs a few seconds each.
+TimeoutStartSec=1800

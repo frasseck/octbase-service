@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Octbase database backup (03:30, with restore test)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
