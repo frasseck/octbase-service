@@ -6,12 +6,13 @@ base_domain: ocete.ch
 
 # Path ON THE ADMIN MACHINE to a checkout of the app repo
 # (frasseck/octbase.git) at the release you want to deploy. The create
-# playbook rsyncs it to the client account (like scripts/sync-installs.sh
-# does between dev and demo today).
+# playbook rsyncs this working tree AS-IS to the client account — make sure
+# it is on the released commit with a clean `git status` before rolling out.
 octbase_src: "{{ lookup('env', 'HOME') }}/dev.ocete.ch"
 
 # Default OCTBASE_APP_VERSION stamp when a ledger entry has no app_version.
-octbase_version: "1.0.1"
+# Keep in step with the latest release entry in the app repo's CHANGELOG.md.
+octbase_version: "1.0.2"
 
 # SMTP relay for outgoing app mail (invitations, notifications). Leaving the
 # host empty makes the API log mail to stdout — set a real relay before

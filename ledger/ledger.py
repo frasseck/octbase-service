@@ -31,8 +31,9 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,27}$")
 RESERVED_NAMES = {"www", "dev", "demo", "mail", "api", "octbase", "admin"}
 EDITIONS = {"team", "business", "enterprise"}
 STATUSES = {"active", "suspended", "removed"}
-# Ports already used by the dev/demo/marketing stacks on the host.
-RESERVED_PORTS = {5432, 5433, 8000, 8001, 8025, 8080, 8081, 8082, 8083}
+# Ports already used by the dev/demo/marketing stacks on the host
+# (8025/8026 are the dev/demo Mailpit UI ports of the dev overlay).
+RESERVED_PORTS = {5432, 5433, 8000, 8001, 8025, 8026, 8080, 8081, 8082, 8083}
 PORT_BASE = 8110   # first client block; blocks advance in steps of 10
 PORT_STEP = 10
 

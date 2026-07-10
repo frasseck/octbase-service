@@ -30,7 +30,14 @@ per-tenant architecture is in the app repo's `docs/hosting-concept.md`.
   (`oct-<name>`); distinct databases, secrets and data directories. Blast
   radius of a compromise is a single Linux account.
 - **All service ports bind to `127.0.0.1`.** Only the root-managed edge proxy
-  (Caddy), which terminates TLS, is reachable from the internet.
+  (Caddy), which terminates TLS, is reachable from the internet. This holds
+  fully for client instances via the deployed `.env` template. For the
+  resident dev/demo/marketing stacks, Postgres and API ports are loopback-only
+  since 2026-07-10; their **frontend ports (8080/8081/8082) still bind on
+  `0.0.0.0`** because the edge Caddyfile currently targets the host's public
+  IP rather than `127.0.0.1`. Open item: repoint the edge targets to
+  `127.0.0.1` (root), then prefix the three `FRONTEND_PORT`/`WEB_PORT` values
+  too — the `.env` comments mark the exact spots.
 - **Secrets** (DB password, JWT/SCM/MFA keys, each ≥32 bytes) are generated at
   first deploy and stored only in the client's `.env` (mode 0600). The git
   ledger holds no secrets.

@@ -19,7 +19,7 @@ set -uo pipefail
 
 BACKUP_ROOT="${BACKUP_ROOT:-/home/claude/backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
-TEST_IMAGE="${TEST_IMAGE:-registry.access.redhat.com/hi/postgresql:latest}"
+TEST_IMAGE="${TEST_IMAGE:-registry.access.redhat.com/hi/postgresql:18}"
 TEST_CTR="octbase_bkptest_$$"
 LOG="$BACKUP_ROOT/backup.log"
 STAMP="$(date +%Y%m%d-%H%M%S)"

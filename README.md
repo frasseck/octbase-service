@@ -55,6 +55,8 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `monitoring/octbase-monitor.{service,timer}` | systemd units for the 5-minute monitor run |
 | `backup/backup-octbase.sh` | Daily DB backup with an automated restore test |
 | `backup/octbase-backup.{service,timer}` | systemd user units for the nightly backup run |
+| `docs/platform-overview.md` | The whole platform: all four repos, host topology, release flow, doc map |
+| `docs/consistency-register.md` | Cross-repo contracts that must stay in sync + known drift, with a per-release checklist |
 | `docs/security-data-protection-concept.md` | Security & data-protection concept (standards mapping, open items) |
 
 ## Prerequisites
@@ -248,6 +250,18 @@ with both files.
 - Blast radius per client = one Linux account: distinct user namespaces,
   distinct DBs, per-service resource limits from the base compose file.
 
+## Platform documentation
+
+This README covers the per-client toolkit only. For the picture across all
+four repositories — what runs on the host, how a change travels from the dev
+checkout via the demo to client instances, and where each concern's
+authoritative documentation lives — see
+[`docs/platform-overview.md`](docs/platform-overview.md). Before changing env
+variables, ports, editions, versions, or health probing anywhere in the
+platform, consult [`docs/consistency-register.md`](docs/consistency-register.md):
+the cross-repo contracts are conventions, not CI-enforced, and that register
+tracks them (and the currently known drift) explicitly.
+
 ## Security & data protection
 
 See [`docs/security-data-protection-concept.md`](docs/security-data-protection-concept.md)
@@ -266,7 +280,9 @@ restriction).
   wire it into the Ansible playbooks per tenant.
 - **Image builds**: each client account builds its own images from the synced
   source (~identical work per client). At ~10+ clients, build once and
-  distribute via a registry or `podman save|load`.
+  distribute via a registry or `podman save|load` — the app repo's CI already
+  publishes per-commit images to GHCR on every `main` push, which is the
+  natural starting point.
 - **Suspend**: `status: suspended` is tracked in the ledger and blocks
   `create-instance.yml`, but there is no playbook yet that stops a running
   stack without removing it (`systemctl --user stop octbase` manually).

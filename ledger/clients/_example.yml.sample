@@ -5,7 +5,7 @@
 # Subdomain label and account suffix: acme → acme.ocete.ch, Linux user oct-acme.
 # Lowercase letters, digits, hyphens, max 28 chars ("oct-" + name must fit
 # useradd's 32-char username limit); must not collide with reserved names
-# (www, dev, demo, mail, api).
+# (www, dev, demo, mail, api, octbase, admin).
 name: acme
 display_name: ACME GmbH
 contact: it@acme.example
