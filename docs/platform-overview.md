@@ -6,7 +6,8 @@ per-client provisioning toolkit); this document is the map of everything
 around it: which repo owns what, what actually runs on the host, how a change
 travels from development to a client instance, and where the authoritative
 documentation for each concern lives.
-**Last reviewed:** 2026-07-10 (against the live host state).
+**Last reviewed:** 2026-07-11 (v1.0.4 release check, host state
+re-verified; last full pass 2026-07-10).
 
 Its companion, the [consistency register](consistency-register.md), lists the
 cross-repo contracts that must stay in sync — read it before changing env
@@ -30,7 +31,10 @@ is a deployment target that only ever moves by pulling `main`.
 
 All four stacks run rootless under the `claude` account today; client
 instances (none onboarded yet) will each get their own `oct-<name>` account
-as described in the README.
+as described in the README. The demo is prepared to become the first
+ledger-managed instance (`ledger/clients/demo.yml`, ports 8110–8112) — the
+move to its own `oct-demo` account via `migrate-instance.yml` is pending,
+so until that runs the table below is still the live state.
 
 | Stack | Compose project | systemd unit (user) | Host ports |
 |---|---|---|---|

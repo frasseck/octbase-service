@@ -35,6 +35,7 @@ python3 -c "import yaml,glob; [yaml.safe_load_all(open(f).read()) and print('ok'
 # From the admin machine only:
 ansible-playbook playbooks/create-instance.yml -e client=<name>   # create OR update (idempotent)
 ansible-playbook playbooks/remove-instance.yml -e client=<name> -e confirm=<name>
+ansible-playbook playbooks/migrate-instance.yml -e client=<name>   # move an installation (prompts for the source)
 ansible-playbook playbooks/set-max-users.yml -e client=<name>
 ansible-playbook playbooks/install-monitoring.yml
 ```
@@ -44,6 +45,7 @@ There is no CI, test suite, or linter in this repo.
 Prefer the project skills — they encode the exact procedures and the current
 platform state:
 - `client-ops` — onboard / reconfigure / offboard a client; release rollout to clients
+- `migrate-instance` — move an installation to its own account and/or domain (adopt a legacy stack, rename a client)
 - `playbook-check` — validate playbook/template/ledger changes before they ship (no Ansible here)
 - `consistency-check` — the cross-repo contract review (register §3) after releases or env/port/version changes
 - `fleet-health` — monitoring, backup, and live host state; where to diagnose an unhealthy stack

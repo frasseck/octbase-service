@@ -1,6 +1,6 @@
 # Path to production — readiness concept
 
-**State as of 2026-07-10 (app v1.0.3):** the software itself is
+**State as of 2026-07-11 (app v1.0.4):** the software itself is
 production-grade — enforced test coverage, migration gates, a hardened auth
 stack, fail-closed commercial defaults, and consistency-reviewed docs (see the
 [consistency register](consistency-register.md)). What still gates real
@@ -70,8 +70,11 @@ monitor interval (5 min) *and* an external probe alarm; both verified once.
 
 ### B3 — Canary tenant: exercise the whole client path  *(~½–1 day)*
 
-No client has ever been provisioned; the ledger is empty and the playbooks
-are unproven end-to-end. Onboard **ourselves** as the first tenant
+No client has ever been provisioned; the ledger holds only the demo's
+adoption entry (its `migrate-instance.yml` run is itself still pending) and
+the playbooks are unproven end-to-end. The demo migration will exercise
+`create-instance.yml` for real once, but not the full lifecycle — so still
+onboard **ourselves** as the first tenant
 (`./ledger/ledger.py new canary …`, DNS record, edge include) and run the
 full lifecycle:
 
@@ -110,7 +113,9 @@ client resources, and dev/demo carry known credentials by design. Provision
 a dedicated production node (the tooling already assumes remote SSH:
 `inventory/hosts.yml`), install monitoring + backups there, and keep
 dev/demo on the current host. Move `canary` first; it validates the
-migration procedure clients will later follow.
+migration procedure clients will later follow
+(`playbooks/migrate-instance.yml` is the tool — same-host moves are what it
+does today; cross-host is the gap to close here).
 
 ### S2 — Secrets hygiene  *(½ day)*
 `smtp_pass` into Ansible Vault (the group_vars comment already demands it);

@@ -87,6 +87,10 @@
           - "--exclude=.pytest_cache"
           - "--exclude=node_modules"
           - "--chown={{ linux_user }}:{{ linux_user }}"
+          # synchronize doesn't honor `become` for the remote-side rsync
+          # process (a non-root ansible_user can't write into another
+          # account's home or chown to it otherwise).
+          - "--rsync-path=sudo rsync"
       notify: Restart stack
 
     - name: Install production compose override

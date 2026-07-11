@@ -13,7 +13,7 @@ operations layer, Caddy configs, all app docs, the mailer and locale parity).
 **All drift found was fixed the same day** — §2 and §2.0 keep the findings
 with their resolutions; the few genuinely open remainders are in §2.1.
 Re-run the checks in §3 after any release, and record findings here with a
-date.
+date — most recently done 2026-07-11 for v1.0.4 (§2.2, one open finding).
 
 ## 1. The contracts
 
@@ -227,6 +227,27 @@ touching; that's why check §3/C1 exists.)
 3. **Rotate the marketing SMTP password** — it sat in three files until today.
 4. Edge IP/auth restriction for `dev.ocete.ch`/`demo.ocete.ch` and the other
    organizational items — tracked in the security concept §7.
+
+## 2.2 Release check 2026-07-11 (v1.0.4)
+
+§3 checklist re-run after the v1.0.4 release (released and deployed to the
+demo the same day; verified live: `/health` reports `1.0.4`, migration 27).
+C1 (env surface) and C8 (live ports vs `RESERVED_PORTS`) clean;
+`octbase_version` bumped `1.0.3` → `1.0.4` (C4). One new finding:
+
+### D10 — Demo `.env` stamps the unreleased 1.1.0 (C4) — **open**
+`~/demo.ocete.ch/.env` was edited to `OCTBASE_APP_VERSION=1.1.0` *after* the
+v1.0.4 restart (the running stack was started with — and still reports —
+`1.0.4`), so the mis-stamp only bites at the **next** demo restart, which
+would then report a version with no dated changelog entry. Likely a mix-up
+with dev's `.env` (dev now stamps `1.0.4` while its tree is on
+`release_v15`, i.e. the future 1.1.0). **Fix (operator, one line):** set
+`OCTBASE_APP_VERSION=1.0.4` back in the demo's `.env`; no restart needed.
+
+Also noted, no defect: `octbase_src` (`~/dev.ocete.ch`) is currently a dirty
+`release_v15` tree — fine between rollouts, but it must be on the released
+commit with a clean tree (C13) before the pending demo migration or any
+client rollout runs.
 
 ## 3. Review checklist (run per release, ~10 minutes)
 
