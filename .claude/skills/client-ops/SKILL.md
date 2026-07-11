@@ -1,6 +1,6 @@
 ---
 name: client-ops
-description: Onboard, reconfigure, or offboard an Octbase client instance, or roll a release out to clients — ledger workflow, playbook invocations, manual DNS/edge steps, safety rules. Use when asked to add/change/suspend/remove a client, change edition/seats/add-ons/version, or deploy a release to client instances.
+description: Onboard, reconfigure, or offboard an Octbase client instance, roll a release out to clients, or sync an instance's code to an app-repo branch — ledger workflow, playbook invocations, manual DNS/edge steps, safety rules. Use when asked to add/change/suspend/remove a client, change edition/seats/add-ons/version, deploy a release to client instances, or sync/update an instance to main.
 ---
 
 # Client lifecycle operations
@@ -79,6 +79,42 @@ is deployed. Then, in this repo:
 3. Admin machine: `create-instance.yml` per active client; the playbook gates
    on `/health`.
 4. Run the `consistency-check` skill (register §3) after the release.
+
+This is the **release** path — a version-stamped rollout from the reviewed
+`octbase_src` working tree, which also re-applies ledger/platform `.env`
+settings. For pulling an instance straight from a branch tip, use the sync path
+below instead.
+
+## Sync an instance to a branch (main)
+
+`sync-instance.yml` deploys `octbase_branch` (default `main`, from
+`octbase_repo` in `group_vars/all.yml`) of the app repo instead of the
+`octbase_src` working tree — the git-branch deploy path (register C13b),
+distinct from the release rollout above.
+
+```bash
+# admin machine — sync the demo (/home/oct-demo/octbase) to origin/main
+ansible-playbook playbooks/sync-instance.yml -e client=demo
+ansible-playbook playbooks/sync-instance.yml -e client=demo -e octbase_branch=release_v15
+```
+
+Clones/updates the branch into a cache **on the admin machine**, rsyncs it into
+`~/octbase` (same excludes as create), refreshes the compose override, and —
+**only if the source changed** — rebuilds, restarts, gates on `/health`.
+Re-running on the branch tip is a no-op. Constraints an agent must respect:
+
+- **Update-only.** It refuses an unprovisioned instance and never touches the
+  `.env`, secrets, data, ports, or ledger-managed settings. Provision with
+  `create-instance.yml` first; suspended/removed clients are skipped
+  (`status == 'active'` assert).
+- **Does not re-stamp the version.** `OCTBASE_APP_VERSION` stays
+  ledger/create-instance-driven (C4), so a branch synced ahead of the stamped
+  `app_version` reports a stale version until `create-instance.yml` re-runs.
+  Mention this when syncing a live instance ahead of its release.
+- **Schema direction.** Make sure the branch is at or above the instance's
+  running DB schema version before syncing — a downgrade is not handled.
+- Not a substitute for the release rollout when a client must be on a
+  *stamped, reviewed* release; use `create-instance.yml` for that.
 
 ## Suspend / offboard
 

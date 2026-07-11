@@ -46,6 +46,7 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `inventory/hosts.yml` | The production host(s) Ansible connects to |
 | `inventory/group_vars/all.yml` | Platform-wide defaults (domain, SMTP relay, source path, …) |
 | `playbooks/create-instance.yml` | Create **or update** a client instance from its ledger entry |
+| `playbooks/sync-instance.yml` | Sync an existing instance's code to an app-repo branch (default `main`), rebuild + restart |
 | `playbooks/remove-instance.yml` | Back up and remove a client instance (needs `confirm=`) |
 | `playbooks/migrate-instance.yml` | Move an existing installation to its own client account and/or a new domain |
 | `playbooks/set-max-users.yml` | Set `OCTBASE_MAX_USERS` for a client and restart its stack |
@@ -145,6 +146,35 @@ for **every** active client:
 ```bash
 ansible-playbook playbooks/create-instance.yml -e client=acme
 ```
+
+### Sync an instance to a branch (main)
+
+`create-instance.yml` deploys whatever `octbase_src` (a working tree on the
+admin machine) currently holds. To instead pull an instance's code straight
+from a branch of the app repo — the way the demo was fed by `git pull` before
+it became a managed client — use `sync-instance.yml`:
+
+```bash
+# sync the demo (/home/oct-demo/octbase) to origin/main, rebuild + restart
+ansible-playbook playbooks/sync-instance.yml -e client=demo
+
+# a different branch for one run
+ansible-playbook playbooks/sync-instance.yml -e client=demo -e octbase_branch=release_v15
+```
+
+It clones/updates `octbase_branch` (default `main`, from `octbase_repo`) into
+a cache on the **admin machine**, rsyncs that tree into `~/octbase` (same
+excludes as create — `.git`, `.env`, `pgdata*`, `attachments`, `node_modules`),
+refreshes the compose override, and — **only if the source changed** —
+rebuilds the images, restarts the stack and gates on `/health`. Re-running when
+already on the branch tip is a no-op (no rebuild, no downtime).
+
+It is **update-only**: it refuses if the instance isn't provisioned yet, and it
+never touches the `.env`, secrets, data, ports, or ledger-managed settings. To
+also re-apply ledger/platform `.env` settings, run `create-instance.yml`; to
+bump the `OCTBASE_APP_VERSION` stamp, edit the ledger and run
+`create-instance.yml`. Make sure the branch is at or above the running schema
+version before syncing a live instance.
 
 ### Set OCTBASE_MAX_USERS
 

@@ -34,6 +34,7 @@ python3 -c "import yaml,glob; [yaml.safe_load_all(open(f).read()) and print('ok'
 
 # From the admin machine only:
 ansible-playbook playbooks/create-instance.yml -e client=<name>   # create OR update (idempotent)
+ansible-playbook playbooks/sync-instance.yml -e client=<name>     # sync code to a branch (default main), rebuild + restart
 ansible-playbook playbooks/remove-instance.yml -e client=<name> -e confirm=<name>
 ansible-playbook playbooks/migrate-instance.yml -e client=<name>   # move an installation (prompts for the source)
 ansible-playbook playbooks/set-max-users.yml -e client=<name>

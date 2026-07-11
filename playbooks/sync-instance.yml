@@ -1,0 +1,177 @@
+---
+# Sync an EXISTING Octbase client installation to a branch of the app repo
+# (default: main) and redeploy it.
+#
+#   ansible-playbook playbooks/sync-instance.yml -e client=demo
+#   ansible-playbook playbooks/sync-instance.yml -e client=demo -e octbase_branch=release_v15
+#
+# Unlike create-instance.yml this is UPDATE-ONLY: it does not create the Linux
+# account, generate secrets, or write/rewrite the client's .env — it refuses if
+# the instance has not been provisioned yet. What it does: fetch the requested
+# branch of frasseck/octbase.git on the ADMIN machine (the host never talks to
+# GitHub — same model as create-instance's octbase_src rsync), push that tree
+# into ~/octbase, refresh the production compose override, and — only if the
+# source actually changed — rebuild the images, restart the stack and gate on
+# /health. Re-running when already on the branch tip is a no-op (no rebuild, no
+# downtime).
+#
+# Data (pgdata, attachments), the .env and its secrets, ports and ledger-managed
+# settings are left untouched. To also re-apply ledger/platform .env settings,
+# run create-instance.yml (idempotent); to bump the version stamp, edit the
+# ledger and run create-instance.yml. Deploy-source contract: C13 covers the
+# working-tree rsync path; this playbook is the git-branch path (see the
+# consistency register). Make sure the branch is at or above the running
+# schema version before syncing a live instance.
+- name: Sync Octbase client instance to an app-repo branch
+  hosts: octbase_hosts
+  become: true
+  vars_files:
+    - ../ledger/clients/{{ client }}.yml
+  vars:
+    linux_user: "{{ client_user_prefix }}{{ name }}"
+    home_dir: "/home/{{ linux_user }}"
+    app_dir: "{{ home_dir }}/{{ client_app_subdir }}"
+    fqdn: "{{ name }}.{{ base_domain }}"
+
+  pre_tasks:
+    - name: Validate ledger entry
+      ansible.builtin.assert:
+        that:
+          - client is defined
+          - name == client
+          - status == 'active'
+          - ports.api is defined
+        fail_msg: >-
+          Ledger entry for '{{ client | default('?') }}' is missing or not
+          'active' — run ./ledger/ledger.py validate.
+
+    - name: Look up the client account (must already exist)
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ linux_user }}"
+      register: account
+      failed_when: false
+
+    - name: Refuse to sync an unprovisioned instance
+      ansible.builtin.assert:
+        that: account.ansible_facts is defined
+        fail_msg: >-
+          No account {{ linux_user }} on this host — sync-instance only updates
+          an existing installation. Provision it first with create-instance.yml.
+
+    - name: Set client runtime facts
+      ansible.builtin.set_fact:
+        client_uid: "{{ account.ansible_facts.getent_passwd[linux_user][1] }}"
+        user_env:
+          XDG_RUNTIME_DIR: "/run/user/{{ account.ansible_facts.getent_passwd[linux_user][1] }}"
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ account.ansible_facts.getent_passwd[linux_user][1] }}/bus"
+
+    - name: Confirm this is a compose-based Octbase checkout
+      ansible.builtin.stat:
+        path: "{{ app_dir }}/podman-compose.yml"
+      register: compose_file
+
+    - name: The installation must already be a checkout
+      ansible.builtin.assert:
+        that: compose_file.stat.exists
+        fail_msg: >-
+          {{ app_dir }} has no podman-compose.yml — nothing to sync. Provision
+          the instance with create-instance.yml first.
+
+  tasks:
+    # On the ADMIN machine, not the host: the admin account owns the GitHub
+    # deploy key (root SSH to GitHub is neither wanted nor set up), exactly as
+    # octbase_src is a working tree on the admin machine. become: false runs it
+    # as the connecting admin user rather than sudo.
+    - name: Fetch the requested branch on the admin machine
+      delegate_to: localhost
+      run_once: true
+      become: false
+      ansible.builtin.git:
+        repo: "{{ octbase_repo }}"
+        dest: "{{ octbase_git_cache }}"
+        version: "{{ octbase_branch }}"
+        depth: 1
+        single_branch: true
+        force: true
+      register: appclone
+
+    - name: Sync application source into the client account
+      ansible.posix.synchronize:
+        src: "{{ octbase_git_cache }}/"
+        dest: "{{ app_dir }}/"
+        archive: true
+        delete: false
+        # See create-instance.yml: with become the synchronize plugin auto-adds
+        # its own --rsync-path=sudo rsync; setting it here prevents a duplicate.
+        rsync_path: "sudo rsync"
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=.env"
+          - "--exclude=pgdata*"
+          - "--exclude=attachments"
+          - "--exclude=.pytest_cache"
+          - "--exclude=node_modules"
+          - "--chown={{ linux_user }}:{{ linux_user }}"
+      register: appsrc
+      notify: Restart stack
+
+    # Kept in step with create-instance: a base podman-compose.yml change on the
+    # branch may need a matching override, and the override is not in the app
+    # repo (rsync never overwrites it). copy is a no-op when already current.
+    - name: Refresh the production compose override
+      ansible.builtin.copy:
+        src: podman-compose.client.yml
+        dest: "{{ app_dir }}/podman-compose.client.yml"
+        owner: "{{ linux_user }}"
+        group: "{{ linux_user }}"
+        mode: "0644"
+      register: override
+      notify: Restart stack
+
+    # App code is baked into the images at build time (not bind-mounted), so new
+    # source only takes effect after a rebuild. Skip it entirely when nothing
+    # changed — that is what makes an already-synced re-run a true no-op.
+    - name: Rebuild container images from the synced source
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.command:
+        cmd: podman-compose -f podman-compose.yml -f podman-compose.client.yml build
+        chdir: "{{ app_dir }}"
+      changed_when: false
+      timeout: 3600
+      when: appsrc.changed or override.changed
+
+    - name: Restart on the new images, then health-check (only if changed)
+      when: appsrc.changed or override.changed
+      block:
+        - name: Flush handlers (apply the pending restart before the health check)
+          ansible.builtin.meta: flush_handlers
+
+        - name: Wait for API health
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ ports.api }}/health"
+            status_code: 200
+          register: health
+          retries: 30
+          delay: 5
+          until: health.status == 200
+
+    - name: Sync summary
+      ansible.builtin.debug:
+        msg: >-
+          {{ fqdn }} synced to {{ octbase_repo }}@{{ octbase_branch }}
+          ({{ appclone.after | default('?') | truncate(12, true, '') }}).
+          {{ 'Rebuilt and restarted; API /health 200 on 127.0.0.1:' ~ ports.api ~ '.'
+             if (appsrc.changed or override.changed)
+             else 'Source already up to date — no rebuild or restart.' }}
+
+  handlers:
+    - name: Restart stack
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.systemd_service:
+        name: octbase
+        scope: user
+        daemon_reload: true
+        state: restarted

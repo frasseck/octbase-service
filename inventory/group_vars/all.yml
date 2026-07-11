@@ -10,6 +10,15 @@ base_domain: ocete.ch
 # it is on the released commit with a clean `git status` before rolling out.
 octbase_src: "{{ lookup('env', 'HOME') }}/dev.ocete.ch"
 
+# The app repo, and the git-based deploy source used by sync-instance.yml
+# (as opposed to create-instance.yml's octbase_src working-tree rsync).
+# sync-instance clones/updates octbase_branch into octbase_git_cache ON THE
+# ADMIN MACHINE, then rsyncs that tree to the client — the production host
+# never talks to GitHub. Override the branch per run: -e octbase_branch=...
+octbase_repo: "git@github.com:frasseck/octbase.git"
+octbase_branch: main
+octbase_git_cache: "{{ lookup('env', 'HOME') }}/.cache/octbase-service/octbase"
+
 # Default OCTBASE_APP_VERSION stamp when a ledger entry has no app_version.
 # Keep in step with the latest release entry in the app repo's CHANGELOG.md.
 octbase_version: "1.0.4"

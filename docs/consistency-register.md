@@ -34,6 +34,7 @@ date — most recently done 2026-07-11 for v1.0.4 (§2.2, one open finding).
 | C15 | **Edge proxy targets**: the root-managed edge Caddyfile's `reverse_proxy` targets must match how the stacks bind their frontend ports | `/etc/caddy/Caddyfile` (root) | `FRONTEND_PORT`/`WEB_PORT` values in the three resident `.env` files; currently the edge targets the host's **public IP**, so those three ports must stay on `0.0.0.0` (see §2.1) |
 | C12 | **Public claims = platform facts**: hosting location, data handling, feature/limit statements on `ocete.ch` | privacy policy / terms (legal texts) | marketing copy (features, pricing) · security concept · actual hosting |
 | C13 | **Deploy source**: `octbase_src` must point at the released commit with a **clean tree** — `create-instance.yml` rsyncs the working tree as-is | `inventory/group_vars/all.yml` | state of `~/dev.ocete.ch` at rollout time (a live dev checkout, often on a release branch with uncommitted work) |
+| C13b | **Git deploy source**: `sync-instance.yml` deploys `octbase_branch` (default `main`) of `octbase_repo` instead of the `octbase_src` working tree — same rsync excludes, but a clean branch tip, not local edits. It does **not** re-stamp `OCTBASE_APP_VERSION` (that stays ledger/create-instance-driven, C4), so a branch synced ahead of its stamped version reports a stale version until `create-instance.yml` re-runs | `inventory/group_vars/all.yml` (`octbase_repo`/`octbase_branch`) | `sync-instance.yml` · app repo branch tip · C4 version stamp |
 
 ## 2. Drift found 2026-07-10 — all fixed same day
 
