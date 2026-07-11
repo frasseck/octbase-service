@@ -1,9 +1,9 @@
 # {{ ansible_managed }} — read by monitor-all.sh
-NAME={{ name }}
+NAME={{ client }}
 USER_ACCT={{ linux_user }}
 DOMAIN={{ fqdn }}
-FRONTEND_PORT={{ ports.frontend }}
-API_PORT={{ ports.api }}
+FRONTEND_PORT={{ client_ledger.ports.frontend }}
+API_PORT={{ client_ledger.ports.api }}
 {% if monitor_edge_probe is defined %}
 # Per-client override of the global edge_probe (ledger: monitor_edge_probe).
 EDGE_PROBE={{ '1' if (monitor_edge_probe | bool) else '0' }}

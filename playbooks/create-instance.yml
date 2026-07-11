@@ -10,27 +10,35 @@
 - name: Create / update Octbase client instance
   hosts: octbase_hosts
   become: true
-  vars_files:
-    - ../ledger/clients/{{ client }}.yml
   vars:
-    linux_user: "{{ client_user_prefix }}{{ name }}"
+    linux_user: "{{ client_user_prefix }}{{ client }}"
     home_dir: "/home/{{ linux_user }}"
     app_dir: "{{ home_dir }}/{{ client_app_subdir }}"
-    fqdn: "{{ name }}.{{ base_domain }}"
+    fqdn: "{{ client }}.{{ base_domain }}"
 
   pre_tasks:
+    - name: Load client ledger entry
+      ansible.builtin.include_vars:
+        file: "../ledger/clients/{{ client }}.yml"
+        name: client_ledger
+      register: client_ledger_loaded
+
+    - name: Normalize client ledger variable
+      ansible.builtin.set_fact:
+        client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
+
     - name: Validate ledger entry
       ansible.builtin.assert:
         that:
           - client is defined
-          - name == client
-          - name is match('^[a-z][a-z0-9-]{1,27}$')
-          - name not in ['www', 'dev', 'mail', 'api', 'octbase', 'admin']
-          - edition | lower in ['team', 'business', 'enterprise']
-          - not ((jira_import | default(false)) and edition | lower == 'team')
-          - max_users | int >= 1
-          - ports.frontend is defined and ports.api is defined and ports.postgres is defined
-          - status == 'active'
+          - client_ledger.name == client
+          - client_ledger.name is match('^[a-z][a-z0-9-]{1,27}$')
+          - client_ledger.name not in ['www', 'dev', 'mail', 'api', 'octbase', 'admin']
+          - client_ledger.edition | lower in ['team', 'business', 'enterprise']
+          - not ((client_ledger.jira_import | default(false)) and client_ledger.edition | lower == 'team')
+          - client_ledger.max_users | int >= 1
+          - client_ledger.ports.frontend is defined and client_ledger.ports.api is defined and client_ledger.ports.postgres is defined
+          - client_ledger.status == 'active'
         fail_msg: >-
           Ledger entry for '{{ client | default('?') }}' is invalid or not
           'active' — run ./ledger/ledger.py validate.
@@ -49,7 +57,7 @@
     - name: Create client Linux account
       ansible.builtin.user:
         name: "{{ linux_user }}"
-        comment: "Octbase client {{ display_name | default(name) }}"
+        comment: "Octbase client {{ client_ledger.display_name | default(client) }}"
         shell: /bin/bash
         create_home: true
       register: client_account
@@ -95,6 +103,23 @@
           - "--exclude=node_modules"
           - "--chown={{ linux_user }}:{{ linux_user }}"
       notify: Restart stack
+      when: octbase_src_remote is not defined
+
+    - name: Sync application source from source checkout on target host
+      ansible.builtin.command:
+        cmd: >-
+          rsync -a
+          --exclude=.git
+          --exclude=.env
+          --exclude=pgdata*
+          --exclude=attachments
+          --exclude=.pytest_cache
+          --exclude=node_modules
+          --chown={{ linux_user }}:{{ linux_user }}
+          {{ octbase_src_remote }}/
+          {{ app_dir }}/
+      notify: Restart stack
+      when: octbase_src_remote is defined
 
     - name: Install production compose override
       ansible.builtin.copy:
@@ -129,10 +154,10 @@
         regexp: "^{{ item.key }}="
         line: "{{ item.key }}={{ item.value }}"
       loop:
-        - { key: OCTBASE_EDITION, value: "{{ edition | upper }}" }
-        - { key: OCTBASE_OPTION_JIRA_IMPORT, value: "{{ 'true' if (jira_import | default(false)) else 'false' }}" }
-        - { key: OCTBASE_MAX_USERS, value: "{{ max_users }}" }
-        - { key: OCTBASE_APP_VERSION, value: "{{ app_version | default(octbase_version) }}" }
+        - { key: OCTBASE_EDITION, value: "{{ client_ledger.edition | upper }}" }
+        - { key: OCTBASE_OPTION_JIRA_IMPORT, value: "{{ 'true' if (client_ledger.jira_import | default(false)) else 'false' }}" }
+        - { key: OCTBASE_MAX_USERS, value: "{{ client_ledger.max_users }}" }
+        - { key: OCTBASE_APP_VERSION, value: "{{ client_ledger.app_version | default(octbase_version) }}" }
       notify: Restart stack
 
     # Platform-wide values from group_vars would otherwise only ever reach a
@@ -202,7 +227,7 @@
 
     - name: Wait for API health
       ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ ports.api }}/health"
+        url: "http://127.0.0.1:{{ client_ledger.ports.api }}/health"
         status_code: 200
       register: health
       retries: 30
@@ -221,21 +246,21 @@
     - name: Register client for monitoring
       ansible.builtin.template:
         src: client-registry.conf.j2
-        dest: "{{ clients_registry_dir }}/{{ name }}.conf"
+        dest: "{{ clients_registry_dir }}/{{ client }}.conf"
         mode: "0644"
 
     - name: Write edge proxy vhost snippet
       ansible.builtin.template:
         src: caddy-vhost.j2
-        dest: "{{ edge_snippet_dir }}/{{ name }}.caddy"
+        dest: "{{ edge_snippet_dir }}/{{ client }}.caddy"
         mode: "0644"
 
     - name: Manual follow-up steps
       ansible.builtin.debug:
         msg:
-          - "Instance {{ fqdn }} is up (API /health 200 on 127.0.0.1:{{ ports.api }})."
+          - "Instance {{ fqdn }} is up (API /health 200 on 127.0.0.1:{{ client_ledger.ports.api }})."
           - "1) DNS (manual): create A/AAAA record {{ fqdn }} -> this host."
-          - "2) Edge proxy: snippet written to {{ edge_snippet_dir }}/{{ name }}.caddy —"
+          - "2) Edge proxy: snippet written to {{ edge_snippet_dir }}/{{ client }}.caddy —"
           - "   ensure the edge Caddyfile has 'import {{ edge_snippet_dir }}/*.caddy', then reload it."
           - "3) Verify: curl -s https://{{ fqdn }}/health"
 

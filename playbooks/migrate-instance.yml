@@ -83,7 +83,7 @@
 
     - name: Set source runtime facts
       ansible.builtin.set_fact:
-        source_uid: "{{ getent_passwd[source_user][1] }}"
+        source_uid: "{{ ansible_facts['getent_passwd'][source_user][1] }}"
 
     - name: Check the source is a compose-based Octbase checkout
       ansible.builtin.stat:
@@ -111,10 +111,186 @@
       ansible.builtin.set_fact:
         source_project: "{{ src_project_raw.stdout | trim | default('octbase', true) }}"
 
+    - name: Read source DB container/service hint from .env
+      ansible.builtin.command:
+        cmd: >-
+          awk -F= '/^(POSTGRES_CONTAINER_NAME|POSTGRES_CONTAINER|DB_CONTAINER_NAME|DB_CONTAINER|DB_SERVICE|POSTGRES_SERVICE|OCTBASE_DB_HOST|DB_HOST)=/{print $2; exit}' {{ source_dir }}/.env
+      register: src_db_hint_raw
+      changed_when: false
+
+    - name: Set source DB hint fact
+      ansible.builtin.set_fact:
+        source_db_hint: "{{ src_db_hint_raw.stdout | trim }}"
+
+    - name: Resolve source postgres container id
+      ansible.builtin.shell: |
+        set -euo pipefail
+        run() { sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }} "$@"; }
+
+        db_hint="{{ source_db_hint | default('', true) }}"
+        if [[ -n "${db_hint}" ]]; then
+          # Drop optional surrounding quotes from .env values.
+          db_hint="${db_hint%\"}"
+          db_hint="${db_hint#\"}"
+          db_hint="${db_hint%\'}"
+          db_hint="${db_hint#\'}"
+
+          # DB_HOST/OCTBASE_DB_HOST may include :port — keep only the host token.
+          db_hint="${db_hint%%:*}"
+
+          # If .env gives a concrete container name, this is the most direct hit.
+          if run podman container exists "${db_hint}"; then
+            echo "${db_hint}"
+            exit 0
+          fi
+
+          # If .env gives a compose service name, ask podman-compose for it.
+          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
+            --env-file {{ source_dir }}/.env \
+            ps -q "${db_hint}" 2>/dev/null | head -n 1 || true)"
+          if [[ -n "${cid}" ]]; then
+            echo "${cid}"
+            exit 0
+          fi
+
+          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
+            --env-file {{ source_dir }}/.env \
+            -p {{ source_project }} ps -q "${db_hint}" 2>/dev/null | head -n 1 || true)"
+          if [[ -n "${cid}" ]]; then
+            echo "${cid}"
+            exit 0
+          fi
+        fi
+
+        # Most reliable path: ask podman-compose from the source checkout.
+        for svc in postgres db octbase-postgres; do
+          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
+            --env-file {{ source_dir }}/.env \
+            ps -q ${svc} 2>/dev/null | head -n 1 || true)"
+          if [[ -n "${cid}" ]]; then
+            echo "${cid}"
+            exit 0
+          fi
+
+          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
+            --env-file {{ source_dir }}/.env \
+            -p {{ source_project }} ps -q ${svc} 2>/dev/null | head -n 1 || true)"
+          if [[ -n "${cid}" ]]; then
+            echo "${cid}"
+            exit 0
+          fi
+        done
+
+        # Prefer compose labels first (podman-compose + docker-compose styles).
+        for svc in postgres db octbase-postgres; do
+          for pkey in io.podman.compose.project com.docker.compose.project; do
+            for skey in io.podman.compose.service com.docker.compose.service; do
+              cid="$(run podman ps -a \
+                --filter label=${pkey}={{ source_project }} \
+                --filter label=${skey}=${svc} \
+                -q | head -n 1 || true)"
+              if [[ -n "${cid}" ]]; then
+                echo "${cid}"
+                exit 0
+              fi
+            done
+          done
+        done
+
+        # Legacy/fallback names.
+        for name in \
+          {{ source_project }}_postgres_1 \
+          {{ source_project }}-postgres-1 \
+          {{ source_project }}_db_1 \
+          {{ source_project }}-db-1
+        do
+          if run podman container exists "${name}"; then
+            echo "${name}"
+            exit 0
+          fi
+        done
+      args:
+        executable: /bin/bash
+        chdir: /tmp
+      register: source_postgres_cid
+      changed_when: false
+
+    - name: Resolve source api container id (best effort)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        run() { sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }} "$@"; }
+
+        for svc in octbase-api api backend web; do
+          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
+            --env-file {{ source_dir }}/.env \
+            ps -q ${svc} 2>/dev/null | head -n 1 || true)"
+          if [[ -n "${cid}" ]]; then
+            echo "${cid}"
+            exit 0
+          fi
+
+          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
+            --env-file {{ source_dir }}/.env \
+            -p {{ source_project }} ps -q ${svc} 2>/dev/null | head -n 1 || true)"
+          if [[ -n "${cid}" ]]; then
+            echo "${cid}"
+            exit 0
+          fi
+        done
+
+        for svc in octbase-api api backend web; do
+          for pkey in io.podman.compose.project com.docker.compose.project; do
+            for skey in io.podman.compose.service com.docker.compose.service; do
+              cid="$(run podman ps -a \
+                --filter label=${pkey}={{ source_project }} \
+                --filter label=${skey}=${svc} \
+                -q | head -n 1 || true)"
+              if [[ -n "${cid}" ]]; then
+                echo "${cid}"
+                exit 0
+              fi
+            done
+          done
+        done
+
+        for name in \
+          {{ source_project }}_octbase-api_1 \
+          {{ source_project }}-octbase-api-1 \
+          {{ source_project }}_api_1 \
+          {{ source_project }}-api-1
+        do
+          if run podman container exists "${name}"; then
+            echo "${name}"
+            exit 0
+          fi
+        done
+      args:
+        executable: /bin/bash
+        chdir: /tmp
+      register: source_api_cid
+      changed_when: false
+
+    - name: Source postgres container must exist
+      ansible.builtin.assert:
+        that:
+          - source_postgres_cid.stdout | trim | length > 0
+        fail_msg: >-
+          Could not find source postgres container for compose project
+          '{{ source_project }}' in account '{{ source_user }}'.
+
   tasks:
+    - name: Preflight check source postgres readiness
+      ansible.builtin.command:
+        cmd: >-
+          sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }}
+          podman exec {{ source_postgres_cid.stdout | trim }}
+          pg_isready -U octbase -d octbase
+        chdir: /tmp
+      changed_when: false
+
     - name: Create migration workspace (doubles as the safety backup)
       ansible.builtin.file:
-        path: "{{ backup_dir }}/migrate-{{ client }}-{{ ansible_date_time.iso8601_basic_short }}"
+        path: "{{ backup_dir }}/migrate-{{ client }}-{{ ansible_facts['date_time']['iso8601_basic_short'] }}"
         state: directory
         mode: "0700"
       register: ws
@@ -127,12 +303,13 @@
       ansible.builtin.command:
         cmd: >-
           sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }}
-          podman stop {{ source_project }}_octbase-api_1
+          podman stop {{ source_api_cid.stdout | trim }}
         # chdir: the inherited cwd is the connecting admin account's home
         # (root SSH is refused, see inventory/hosts.yml); sudo -u {{ source_user }}
         # refuses to run if that directory isn't reachable by the target user.
         chdir: /tmp
       failed_when: false
+      when: source_api_cid.stdout | trim | length > 0
 
     # pipefail is essential: without it the pipeline's exit code is gzip's,
     # and a dead postgres container would yield an empty "successful" dump.
@@ -140,7 +317,7 @@
       ansible.builtin.shell: |
         set -euo pipefail
         sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }} \
-          podman exec {{ source_project }}_postgres_1 pg_dump -U octbase octbase \
+          podman exec {{ source_postgres_cid.stdout | trim }} pg_dump -U octbase octbase \
           | gzip > {{ migrate_ws }}/db.sql.gz
       args:
         executable: /bin/bash
@@ -193,17 +370,19 @@
 # linger, source sync, .env with fresh secrets, build, systemd user unit,
 # health gate, monitor registration, edge snippet.
 - import_playbook: create-instance.yml
+  vars:
+    # Migration runs on the platform host itself: reuse the source checkout
+    # already present there instead of requiring admin-machine octbase_src.
+    octbase_src_remote: "{{ source_dir }}"
 
 - name: Migrate Octbase installation — phase 3 of 3, restore data & cut the edge over
   hosts: octbase_hosts
   become: true
-  vars_files:
-    - ../ledger/clients/{{ client }}.yml
   vars:
-    linux_user: "{{ client_user_prefix }}{{ name }}"
+    linux_user: "{{ client_user_prefix }}{{ client }}"
     home_dir: "/home/{{ linux_user }}"
     app_dir: "{{ home_dir }}/{{ client_app_subdir }}"
-    fqdn: "{{ name }}.{{ base_domain }}"
+    fqdn: "{{ client }}.{{ base_domain }}"
     # Keys that data at rest depends on — the restored database is unreadable
     # (encrypted TOTP/SCM secrets) or logs everyone out (JWT) under the
     # freshly generated ones. POSTGRES_PASSWORD is deliberately NOT carried:
@@ -214,6 +393,16 @@
       - OCTBASE_MFA_ENC_KEY
 
   pre_tasks:
+    - name: Load client ledger entry
+      ansible.builtin.include_vars:
+        file: "../ledger/clients/{{ client }}.yml"
+        name: client_ledger
+      register: client_ledger_loaded
+
+    - name: Normalize client ledger variable
+      ansible.builtin.set_fact:
+        client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
+
     - name: Phase 1 must have run in this same invocation
       ansible.builtin.assert:
         that: migrate_ws is defined
@@ -228,10 +417,57 @@
 
     - name: Set client runtime facts
       ansible.builtin.set_fact:
-        client_uid: "{{ getent_passwd[linux_user][1] }}"
+        client_uid: "{{ ansible_facts['getent_passwd'][linux_user][1] }}"
         user_env:
-          XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[linux_user][1] }}"
-          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[linux_user][1] }}/bus"
+          XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['getent_passwd'][linux_user][1] }}"
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_facts['getent_passwd'][linux_user][1] }}/bus"
+
+    - name: Read the target compose project name
+      ansible.builtin.command:
+        cmd: awk -F= '/^COMPOSE_PROJECT_NAME=/{v=$2} END{print v}' {{ app_dir }}/.env
+      register: tgt_project_raw
+      changed_when: false
+
+    - name: Set target project fact
+      ansible.builtin.set_fact:
+        target_project: "{{ tgt_project_raw.stdout | trim | default('octbase', true) }}"
+
+    - name: Resolve target api container id
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        podman ps -a \
+          --filter label=io.podman.compose.project={{ target_project }} \
+          --filter label=io.podman.compose.service=octbase-api \
+          -q | head -n 1
+      args:
+        executable: /bin/bash
+      register: target_api_cid
+      changed_when: false
+
+    - name: Resolve target postgres container id
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        podman ps -a \
+          --filter label=io.podman.compose.project={{ target_project }} \
+          --filter label=io.podman.compose.service=postgres \
+          -q | head -n 1
+      args:
+        executable: /bin/bash
+      register: target_postgres_cid
+      changed_when: false
+
+    - name: Target containers must exist after provisioning
+      ansible.builtin.assert:
+        that:
+          - target_api_cid.stdout | trim | length > 0
+          - target_postgres_cid.stdout | trim | length > 0
+        fail_msg: >-
+          Could not resolve target API/postgres containers for compose project
+          '{{ target_project }}' in account '{{ linux_user }}'.
 
   tasks:
     - name: Read the staged source .env
@@ -261,17 +497,17 @@
       become_user: "{{ linux_user }}"
       environment: "{{ user_env }}"
       ansible.builtin.command:
-        cmd: podman stop octbase_octbase-api_1
+        cmd: podman stop {{ target_api_cid.stdout | trim }}
 
     - name: Replace the fresh database with the source dump
       ansible.builtin.shell: |
         set -euo pipefail
         run() { sudo -u {{ linux_user }} XDG_RUNTIME_DIR=/run/user/{{ client_uid }} "$@"; }
-        run podman exec octbase_postgres_1 psql -U octbase -d postgres -q \
+        run podman exec {{ target_postgres_cid.stdout | trim }} psql -U octbase -d postgres -q \
           -c 'DROP DATABASE IF EXISTS octbase WITH (FORCE)' \
           -c 'CREATE DATABASE octbase OWNER octbase'
         gunzip -c {{ migrate_ws }}/db.sql.gz \
-          | run podman exec -i octbase_postgres_1 psql -q -v ON_ERROR_STOP=1 -U octbase -d octbase
+          | run podman exec -i {{ target_postgres_cid.stdout | trim }} psql -q -v ON_ERROR_STOP=1 -U octbase -d octbase
       args:
         executable: /bin/bash
         chdir: /tmp
@@ -302,7 +538,7 @@
 
     - name: Wait for API health on the migrated data
       ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ ports.api }}/health"
+        url: "http://127.0.0.1:{{ client_ledger.ports.api }}/health"
         status_code: 200
       register: health
       retries: 30
@@ -316,12 +552,18 @@
         path: "{{ edge_caddyfile }}"
         regexp: "^import {{ edge_snippet_dir | regex_escape }}/"
         line: "import {{ edge_snippet_dir }}/*.caddy"
+      tags:
+        - edge_cutover
+        - finalize
 
     - name: Retire the source domain's hardcoded vhost block (if any)
       ansible.builtin.replace:
         path: "{{ edge_caddyfile }}"
         regexp: '(?m)^{{ source_fqdn | regex_escape }}\s*\{[^}]*\}\n?'
         replace: ""
+      tags:
+        - edge_cutover
+        - finalize
 
     - name: Drop the source's old snippet and monitor registration (rename case)
       ansible.builtin.file:
@@ -330,22 +572,51 @@
       loop:
         - "{{ edge_snippet_dir }}/{{ source_label }}.caddy"
         - "{{ clients_registry_dir }}/{{ source_label }}.conf"
-      when: source_label != name
+      when: source_label != client
+      tags:
+        - edge_cutover
+        - finalize
 
     - name: Validate the edge Caddyfile
       ansible.builtin.command:
         cmd: caddy validate --config {{ edge_caddyfile }}
       changed_when: false
+      tags:
+        - edge_cutover
+        - finalize
 
     - name: Reload the edge proxy
       ansible.builtin.systemd_service:
         name: caddy
         state: reloaded
+      tags:
+        - edge_cutover
+        - finalize
+
+    - name: Keep source systemd unit disabled after successful cutover
+      ansible.builtin.command:
+        cmd: >-
+          sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }}
+          systemctl --user disable --now octbase
+        chdir: /tmp
+      failed_when: false
+      tags:
+        - finalize
+
+    - name: Keep source stack down after successful cutover
+      ansible.builtin.command:
+        cmd: >-
+          sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }}
+          podman-compose down
+        chdir: "{{ source_dir }}"
+      failed_when: false
+      tags:
+        - finalize
 
     - name: Migration follow-ups
       ansible.builtin.debug:
         msg:
-          - "{{ source_fqdn }} → {{ fqdn }} migrated; API healthy on 127.0.0.1:{{ ports.api }}."
+          - "{{ source_fqdn }} → {{ fqdn }} migrated; API healthy on 127.0.0.1:{{ client_ledger.ports.api }}."
           - "Safety copy (dump + .env + attachments) kept at {{ migrate_ws }} (root-only) — prune after verification."
           - "1) Verify in the browser: https://{{ fqdn }} — log in, check projects, pages, attachments."
           - "2) DNS: {{ 'create/repoint the ' + fqdn + ' record to this host (domain changed).' if source_fqdn != fqdn else 'unchanged (same domain).' }}"
