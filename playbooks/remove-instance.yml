@@ -13,16 +13,24 @@
 - name: Remove Octbase client instance
   hosts: octbase_hosts
   become: true
-  vars_files:
-    - ../ledger/clients/{{ client }}.yml
   vars:
-    linux_user: "{{ client_user_prefix }}{{ name }}"
+    linux_user: "{{ client_user_prefix }}{{ client }}"
     home_dir: "/home/{{ linux_user }}"
     app_dir: "{{ home_dir }}/{{ client_app_subdir }}"
-    fqdn: "{{ name }}.{{ base_domain }}"
-    ts: "{{ ansible_date_time.iso8601_basic_short }}"
+    fqdn: "{{ client }}.{{ base_domain }}"
+    ts: "{{ ansible_facts['date_time']['iso8601_basic_short'] }}"
 
   pre_tasks:
+    - name: Load client ledger entry
+      ansible.builtin.include_vars:
+        file: "../ledger/clients/{{ client }}.yml"
+        name: client_ledger
+      register: client_ledger_loaded
+
+    - name: Normalize client ledger variable
+      ansible.builtin.set_fact:
+        client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
+
     - name: Require explicit confirmation
       ansible.builtin.assert:
         that:
@@ -38,7 +46,7 @@
     # or this play to restore/finish — until then the client is unmonitored.)
     - name: Deregister from monitoring
       ansible.builtin.file:
-        path: "{{ clients_registry_dir }}/{{ name }}.conf"
+        path: "{{ clients_registry_dir }}/{{ client }}.conf"
         state: absent
 
     - name: Check whether the account exists
@@ -71,7 +79,7 @@
             set -euo pipefail
             sudo -u {{ linux_user }} XDG_RUNTIME_DIR=/run/user/{{ client_uid }} \
               podman exec octbase_postgres_1 pg_dump -U octbase octbase \
-              | gzip > {{ backup_dir }}/{{ name }}-db-{{ ts }}.sql.gz
+              | gzip > {{ backup_dir }}/{{ client }}-db-{{ ts }}.sql.gz
           args:
             executable: /bin/bash
             # inherited cwd is the connecting admin account's home (root SSH
@@ -83,8 +91,8 @@
         - name: Verify database backup is a complete dump
           ansible.builtin.shell: |
             set -euo pipefail
-            gunzip -t {{ backup_dir }}/{{ name }}-db-{{ ts }}.sql.gz
-            gunzip -c {{ backup_dir }}/{{ name }}-db-{{ ts }}.sql.gz \
+            gunzip -t {{ backup_dir }}/{{ client }}-db-{{ ts }}.sql.gz
+            gunzip -c {{ backup_dir }}/{{ client }}-db-{{ ts }}.sql.gz \
               | tail -n 20 | grep -q 'PostgreSQL database dump complete'
           args:
             executable: /bin/bash
@@ -94,7 +102,7 @@
         - name: Final files backup (attachments + .env)
           ansible.builtin.shell: |
             set -euo pipefail
-            tar czf {{ backup_dir }}/{{ name }}-files-{{ ts }}.tar.gz \
+            tar czf {{ backup_dir }}/{{ client }}-files-{{ ts }}.tar.gz \
               -C {{ home_dir }} {{ client_app_subdir }}/attachments {{ client_app_subdir }}/.env
           args:
             executable: /bin/bash
@@ -131,13 +139,13 @@
 
     - name: Remove edge vhost snippet
       ansible.builtin.file:
-        path: "{{ edge_snippet_dir }}/{{ name }}.caddy"
+        path: "{{ edge_snippet_dir }}/{{ client }}.caddy"
         state: absent
 
     - name: Manual follow-up steps
       ansible.builtin.debug:
         msg:
-          - "Client {{ name }} removed{{ '' if (skip_backup | default(false) | bool) else '; final backup in ' + backup_dir }}."
+          - "Client {{ client }} removed{{ '' if (skip_backup | default(false) | bool) else '; final backup in ' + backup_dir }}."
           - "1) DNS (manual): delete the {{ fqdn }} record."
-          - "2) Edge proxy: reload it (its {{ name }}.caddy snippet is gone)."
-          - "3) Ledger: set status: removed in ledger/clients/{{ name }}.yml and commit."
+          - "2) Edge proxy: reload it (its {{ client }}.caddy snippet is gone)."
+          - "3) Ledger: set status: removed in ledger/clients/{{ client }}.yml and commit."
