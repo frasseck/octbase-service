@@ -74,6 +74,10 @@
               | gzip > {{ backup_dir }}/{{ name }}-db-{{ ts }}.sql.gz
           args:
             executable: /bin/bash
+            # inherited cwd is the connecting admin account's home (root SSH
+            # is refused); sudo -u {{ linux_user }} won't run if that dir
+            # isn't reachable by the target user.
+            chdir: /tmp
           when: not (skip_backup | default(false) | bool)
 
         - name: Verify database backup is a complete dump

@@ -128,6 +128,10 @@
         cmd: >-
           sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }}
           podman stop {{ source_project }}_octbase-api_1
+        # chdir: the inherited cwd is the connecting admin account's home
+        # (root SSH is refused, see inventory/hosts.yml); sudo -u {{ source_user }}
+        # refuses to run if that directory isn't reachable by the target user.
+        chdir: /tmp
       failed_when: false
 
     # pipefail is essential: without it the pipeline's exit code is gzip's,
@@ -140,6 +144,7 @@
           | gzip > {{ migrate_ws }}/db.sql.gz
       args:
         executable: /bin/bash
+        chdir: /tmp
 
     - name: Verify the dump is a complete backup
       ansible.builtin.shell: |
@@ -174,6 +179,7 @@
         cmd: >-
           sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }}
           systemctl --user disable --now octbase
+        chdir: /tmp
       failed_when: false
 
     - name: Bring the source stack down
@@ -268,6 +274,7 @@
           | run podman exec -i octbase_postgres_1 psql -q -v ON_ERROR_STOP=1 -U octbase -d octbase
       args:
         executable: /bin/bash
+        chdir: /tmp
 
     - name: Check for staged attachments
       ansible.builtin.stat:
