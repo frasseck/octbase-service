@@ -1,6 +1,6 @@
 # {{ ansible_managed }}
-# Edge vhost for client "{{ name }}" ({{ display_name | default(name) }}).
+# Edge vhost for client "{{ client }}" ({{ client_ledger.display_name | default(client) }}).
 # Include from the edge Caddyfile:  import {{ edge_snippet_dir }}/*.caddy
 {{ fqdn }} {
-	reverse_proxy 127.0.0.1:{{ ports.frontend }}
+	reverse_proxy 127.0.0.1:{{ client_ledger.ports.frontend }}
 }
