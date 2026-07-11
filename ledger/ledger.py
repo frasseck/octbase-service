@@ -28,7 +28,9 @@ CLIENTS_DIR = Path(__file__).resolve().parent / "clients"
 # Max 28 chars: the Linux account is "oct-<name>" and useradd caps
 # usernames at 32 characters.
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,27}$")
-RESERVED_NAMES = {"www", "dev", "demo", "mail", "api", "octbase", "admin"}
+# "demo" is deliberately not reserved: the public demo is ledger-managed
+# since 2026-07-11 (clients/demo.yml, migrated via migrate-instance.yml).
+RESERVED_NAMES = {"www", "dev", "mail", "api", "octbase", "admin"}
 EDITIONS = {"team", "business", "enterprise"}
 STATUSES = {"active", "suspended", "removed"}
 # Ports already used by the dev/demo/marketing stacks on the host

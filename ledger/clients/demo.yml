@@ -1,0 +1,28 @@
+# The platform's OWN public demo (demo.ocete.ch) — not a paying client, but
+# ledger-managed like one since its migration off the shared claude account
+# (playbooks/migrate-instance.yml; see the migrate-instance skill for the
+# runbook). Special: its .env sets OCTBASE_DEMO_MODE=true (seeded demo
+# logins), which the client compose override passes through.
+name: demo
+display_name: Public demo (demo.ocete.ch)
+contact: lars@beyags.com
+
+# Showcases the full product; the Jira import is included in enterprise.
+edition: enterprise
+jira_import: false
+max_users: 25
+
+registered: 2026-07-11
+status: active
+
+app_version: "1.0.4"
+
+ports:
+  frontend: 8110
+  api: 8111
+  postgres: 8112
+
+notes: >-
+  Platform demo instance. Migration from /home/claude/demo.ocete.ch
+  (legacy ports 8080/8000/5432, which stay reserved) is pending until
+  migrate-instance.yml is run from the admin machine.

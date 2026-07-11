@@ -47,6 +47,7 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `inventory/group_vars/all.yml` | Platform-wide defaults (domain, SMTP relay, source path, …) |
 | `playbooks/create-instance.yml` | Create **or update** a client instance from its ledger entry |
 | `playbooks/remove-instance.yml` | Back up and remove a client instance (needs `confirm=`) |
+| `playbooks/migrate-instance.yml` | Move an existing installation to its own client account and/or a new domain |
 | `playbooks/set-max-users.yml` | Set `OCTBASE_MAX_USERS` for a client and restart its stack |
 | `playbooks/install-monitoring.yml` | Install the fleet monitor (script + systemd timer) on the host |
 | `playbooks/templates/` | `.env`, systemd user unit, edge Caddy vhost templates |
@@ -186,6 +187,30 @@ all its data, and removes the edge snippet and monitor registration
 (`skip_backup=true` skips the backup). Then, manually: remove the DNS record,
 reload the edge proxy, and set `status: removed` in the ledger file (keep the
 file — it is the historical record).
+
+### Move an installation to a new user / domain
+
+```bash
+# target = a normal ledger entry (create it first when adopting a legacy stack)
+ansible-playbook playbooks/migrate-instance.yml -e client=<name>
+```
+
+Moves an **existing** installation onto its own `oct-<name>` account — either
+adopting a legacy shared-account stack (e.g. the public demo, prepared in
+`ledger/clients/demo.yml`) into the client model, or renaming a managed
+client to a new name/domain. The playbook asks for the source domain, account
+and path (or takes `-e source_fqdn= -e source_user= -e source_dir=
+-e confirm=<name>`), then: dumps the source DB and stages `.env` +
+attachments to `/var/backups/octbase/` (kept as safety copy), stops the
+source (data left in place for manual removal after verification), provisions
+the target via `create-instance.yml`, restores DB + attachments, carries the
+JWT/SCM/MFA secrets, gates on `/health`, and cuts the edge over — this is the
+one playbook allowed to edit the root Caddyfile (adds the
+`import /etc/octbase/edge/*.caddy` line, retires the source's hardcoded
+vhost block, `caddy validate` + reload). Downtime spans stop → health-check;
+the target's code (from `octbase_src`) must be at or above the source's
+schema version. Full runbook and the demo-specific steps: the
+`migrate-instance` skill.
 
 ## Monitoring
 

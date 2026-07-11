@@ -1,0 +1,347 @@
+---
+# Migrate an EXISTING Octbase installation onto its own restricted client
+# account — and, if the target name differs, onto a new domain. Covers both:
+#
+#   - adopting a legacy stack (e.g. the demo running in a shared account)
+#     into the standard client model: dedicated Linux user, rootless podman,
+#     systemd --user unit, loopback ports, edge snippet, monitoring;
+#   - renaming a managed client (oct-old / old.ocete.ch → oct-new / new.ocete.ch).
+#
+# The TARGET is a normal ledger entry (create it first, `ledger.py validate`);
+# the SOURCE (domain, account, path) is asked for interactively — or passed
+# with -e to run unattended:
+#
+#   ansible-playbook playbooks/migrate-instance.yml -e client=demo \
+#       [-e source_fqdn=demo.ocete.ch -e source_user=claude \
+#        -e source_dir=/home/claude/demo.ocete.ch -e confirm=demo]
+#
+# What moves: the database (pg_dump → restore), attachments, and the crypto
+# secrets that data at rest depends on (JWT/SCM/MFA keys). What does NOT
+# move: the app source (re-synced from octbase_src at the platform release —
+# make sure it is at or above the source's schema version), the Postgres
+# password and ports (fresh from the ledger), and the old account itself —
+# the source stack is left STOPPED in place for manual removal after
+# verification. Downtime: from phase 1 until the health check passes
+# (image build + restore, typically minutes).
+#
+# Phase 1 dumps and stops the source; then create-instance.yml provisions the
+# target as usual; phase 2 restores the data, carries the secrets, and cuts
+# the edge proxy over (adds the snippet import to the edge Caddyfile and
+# retires the source's hardcoded vhost block, validate + reload).
+
+- name: Migrate Octbase installation — phase 1 of 3, dump & stop the source
+  hosts: octbase_hosts
+  become: true
+
+  vars_prompt:
+    - name: source_fqdn
+      prompt: Domain to move (e.g. demo.ocete.ch)
+      private: false
+    - name: source_user
+      prompt: Linux account currently running it (e.g. claude, or oct-<old>)
+      private: false
+    - name: source_dir_in
+      prompt: Path of the installation (empty = /home/<account>/<domain>)
+      default: ""
+      private: false
+    - name: confirm
+      prompt: Phase 1 STOPS the source stack — type the target client name to confirm
+      private: false
+
+  pre_tasks:
+    - name: Validate input
+      ansible.builtin.assert:
+        that:
+          - client is defined
+          - confirm == client
+          - source_fqdn is match('^[a-z0-9][a-z0-9.-]+$')
+          - source_user is match('^[a-z_][a-z0-9_-]*$')
+        fail_msg: >-
+          Pass -e client=<target ledger name> and confirm with exactly that
+          name; source domain/account look wrong otherwise.
+
+    # set_fact (not play vars): phase 3 is a separate play and only host
+    # facts survive across plays.
+    - name: Resolve and remember the source
+      ansible.builtin.set_fact:
+        source_fqdn: "{{ source_fqdn }}"
+        source_user: "{{ source_user }}"
+        source_label: "{{ source_fqdn.split('.') | first }}"
+        source_dir: "{{ source_dir_in | trim or '/home/' + source_user + '/' + source_fqdn }}"
+
+    - name: Refuse to migrate an installation onto itself
+      ansible.builtin.assert:
+        that:
+          - source_user != client_user_prefix + client
+          - source_dir != '/home/' + client_user_prefix + client + '/' + client_app_subdir
+        fail_msg: "Source and target are the same account/path."
+
+    - name: Look up the source account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ source_user }}"
+
+    - name: Set source runtime facts
+      ansible.builtin.set_fact:
+        source_uid: "{{ getent_passwd[source_user][1] }}"
+
+    - name: Check the source is a compose-based Octbase checkout
+      ansible.builtin.stat:
+        path: "{{ source_dir }}/{{ item }}"
+      register: src_files
+      loop:
+        - podman-compose.yml
+        - .env
+
+    - name: Source checkout must exist
+      ansible.builtin.assert:
+        that: src_files.results | map(attribute='stat.exists') | min
+        fail_msg: "{{ source_dir }} has no podman-compose.yml/.env — not an Octbase installation."
+
+    # Container names are <project>_<service>_1; legacy stacks may use a
+    # project name other than "octbase" (that is what keeps two checkouts in
+    # ONE account apart — client accounts all use "octbase", contract C7).
+    - name: Read the source compose project name
+      ansible.builtin.command:
+        cmd: awk -F= '/^COMPOSE_PROJECT_NAME=/{v=$2} END{print v}' {{ source_dir }}/.env
+      register: src_project_raw
+      changed_when: false
+
+    - name: Set source project fact
+      ansible.builtin.set_fact:
+        source_project: "{{ src_project_raw.stdout | trim | default('octbase', true) }}"
+
+  tasks:
+    - name: Create migration workspace (doubles as the safety backup)
+      ansible.builtin.file:
+        path: "{{ backup_dir }}/migrate-{{ client }}-{{ ansible_date_time.iso8601_basic_short }}"
+        state: directory
+        mode: "0700"
+      register: ws
+
+    - name: Remember the workspace for phase 3
+      ansible.builtin.set_fact:
+        migrate_ws: "{{ ws.path }}"
+
+    - name: Stop the source API (freeze writes; postgres stays up for the dump)
+      ansible.builtin.command:
+        cmd: >-
+          sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }}
+          podman stop {{ source_project }}_octbase-api_1
+      failed_when: false
+
+    # pipefail is essential: without it the pipeline's exit code is gzip's,
+    # and a dead postgres container would yield an empty "successful" dump.
+    - name: Dump the source database
+      ansible.builtin.shell: |
+        set -euo pipefail
+        sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }} \
+          podman exec {{ source_project }}_postgres_1 pg_dump -U octbase octbase \
+          | gzip > {{ migrate_ws }}/db.sql.gz
+      args:
+        executable: /bin/bash
+
+    - name: Verify the dump is a complete backup
+      ansible.builtin.shell: |
+        set -euo pipefail
+        gunzip -t {{ migrate_ws }}/db.sql.gz
+        gunzip -c {{ migrate_ws }}/db.sql.gz \
+          | tail -n 20 | grep -q 'PostgreSQL database dump complete'
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Stage the source .env (holds the secrets to carry over)
+      ansible.builtin.copy:
+        src: "{{ source_dir }}/.env"
+        dest: "{{ migrate_ws }}/source.env"
+        remote_src: true
+        mode: "0600"
+      no_log: true
+
+    - name: Check for source attachments
+      ansible.builtin.stat:
+        path: "{{ source_dir }}/attachments"
+      register: src_attach
+
+    - name: Stage attachments
+      ansible.builtin.command:
+        cmd: cp -a {{ source_dir }}/attachments {{ migrate_ws }}/attachments
+      when: src_attach.stat.exists and src_attach.stat.isdir
+
+    - name: Stop and disable a source systemd user unit (managed-client source)
+      ansible.builtin.command:
+        cmd: >-
+          sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }}
+          systemctl --user disable --now octbase
+      failed_when: false
+
+    - name: Bring the source stack down
+      ansible.builtin.command:
+        cmd: >-
+          sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }}
+          podman-compose down
+        chdir: "{{ source_dir }}"
+
+# Phase 2: provision the target exactly like any new client — account,
+# linger, source sync, .env with fresh secrets, build, systemd user unit,
+# health gate, monitor registration, edge snippet.
+- import_playbook: create-instance.yml
+
+- name: Migrate Octbase installation — phase 3 of 3, restore data & cut the edge over
+  hosts: octbase_hosts
+  become: true
+  vars_files:
+    - ../ledger/clients/{{ client }}.yml
+  vars:
+    linux_user: "{{ client_user_prefix }}{{ name }}"
+    home_dir: "/home/{{ linux_user }}"
+    app_dir: "{{ home_dir }}/{{ client_app_subdir }}"
+    fqdn: "{{ name }}.{{ base_domain }}"
+    # Keys that data at rest depends on — the restored database is unreadable
+    # (encrypted TOTP/SCM secrets) or logs everyone out (JWT) under the
+    # freshly generated ones. POSTGRES_PASSWORD is deliberately NOT carried:
+    # the target's pgdata was initialized with its own.
+    carry_keys:
+      - OCTBASE_JWT_SECRET
+      - OCTBASE_SCM_ENC_KEY
+      - OCTBASE_MFA_ENC_KEY
+
+  pre_tasks:
+    - name: Phase 1 must have run in this same invocation
+      ansible.builtin.assert:
+        that: migrate_ws is defined
+        fail_msg: >-
+          Run the whole migrate-instance.yml playbook — this phase relies on
+          facts and staged data from phase 1 and cannot run alone.
+
+    - name: Look up the client account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ linux_user }}"
+
+    - name: Set client runtime facts
+      ansible.builtin.set_fact:
+        client_uid: "{{ getent_passwd[linux_user][1] }}"
+        user_env:
+          XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[linux_user][1] }}"
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[linux_user][1] }}/bus"
+
+  tasks:
+    - name: Read the staged source .env
+      ansible.builtin.slurp:
+        src: "{{ migrate_ws }}/source.env"
+      register: srcenv
+      no_log: true
+
+    - name: Parse the source env
+      ansible.builtin.set_fact:
+        source_env: >-
+          {{ dict(srcenv.content | b64decode | split('\n')
+                  | select('match', '^[A-Za-z_][A-Za-z0-9_]*=')
+                  | map('split', '=', 1)) }}
+      no_log: true
+
+    - name: Carry the crypto secrets into the client .env
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/.env"
+        regexp: "^{{ item }}="
+        line: "{{ item }}={{ source_env[item] }}"
+      loop: "{{ carry_keys }}"
+      when: item in source_env
+      no_log: true
+
+    - name: Stop the client API for the restore
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.command:
+        cmd: podman stop octbase_octbase-api_1
+
+    - name: Replace the fresh database with the source dump
+      ansible.builtin.shell: |
+        set -euo pipefail
+        run() { sudo -u {{ linux_user }} XDG_RUNTIME_DIR=/run/user/{{ client_uid }} "$@"; }
+        run podman exec octbase_postgres_1 psql -U octbase -d postgres -q \
+          -c 'DROP DATABASE IF EXISTS octbase WITH (FORCE)' \
+          -c 'CREATE DATABASE octbase OWNER octbase'
+        gunzip -c {{ migrate_ws }}/db.sql.gz \
+          | run podman exec -i octbase_postgres_1 psql -q -v ON_ERROR_STOP=1 -U octbase -d octbase
+      args:
+        executable: /bin/bash
+
+    - name: Check for staged attachments
+      ansible.builtin.stat:
+        path: "{{ migrate_ws }}/attachments"
+      register: staged_attach
+
+    # The :U mount flag remaps ownership into the client's user namespace at
+    # container start — plain host-side ownership is all that is needed here.
+    - name: Restore attachments
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cp -a {{ migrate_ws }}/attachments/. {{ app_dir }}/attachments/
+        chown -R {{ linux_user }}:{{ linux_user }} {{ app_dir }}/attachments
+      args:
+        executable: /bin/bash
+      when: staged_attach.stat.exists
+
+    - name: Restart the stack on the migrated data
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.systemd_service:
+        name: octbase
+        scope: user
+        state: restarted
+
+    - name: Wait for API health on the migrated data
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ ports.api }}/health"
+        status_code: 200
+      register: health
+      retries: 30
+      delay: 5
+      until: health.status == 200
+
+    # ── Edge cutover ──  All file edits land before the single validate +
+    # reload at the end, so the proxy never sees a half-switched config.
+    - name: Ensure the edge Caddyfile imports the per-client snippets
+      ansible.builtin.lineinfile:
+        path: "{{ edge_caddyfile }}"
+        regexp: "^import {{ edge_snippet_dir | regex_escape }}/"
+        line: "import {{ edge_snippet_dir }}/*.caddy"
+
+    - name: Retire the source domain's hardcoded vhost block (if any)
+      ansible.builtin.replace:
+        path: "{{ edge_caddyfile }}"
+        regexp: '(?m)^{{ source_fqdn | regex_escape }}\s*\{[^}]*\}\n?'
+        replace: ""
+
+    - name: Drop the source's old snippet and monitor registration (rename case)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ edge_snippet_dir }}/{{ source_label }}.caddy"
+        - "{{ clients_registry_dir }}/{{ source_label }}.conf"
+      when: source_label != name
+
+    - name: Validate the edge Caddyfile
+      ansible.builtin.command:
+        cmd: caddy validate --config {{ edge_caddyfile }}
+      changed_when: false
+
+    - name: Reload the edge proxy
+      ansible.builtin.systemd_service:
+        name: caddy
+        state: reloaded
+
+    - name: Migration follow-ups
+      ansible.builtin.debug:
+        msg:
+          - "{{ source_fqdn }} → {{ fqdn }} migrated; API healthy on 127.0.0.1:{{ ports.api }}."
+          - "Safety copy (dump + .env + attachments) kept at {{ migrate_ws }} (root-only) — prune after verification."
+          - "1) Verify in the browser: https://{{ fqdn }} — log in, check projects, pages, attachments."
+          - "2) DNS: {{ 'create/repoint the ' + fqdn + ' record to this host (domain changed).' if source_fqdn != fqdn else 'unchanged (same domain).' }}"
+          - "3) The source is STOPPED but kept at {{ source_dir }} (account {{ source_user }}) — remove it manually once verified; check `podman ps` there for leftover overlay containers (e.g. Mailpit)."
+          - "4) Remove the source from whatever started it (cron, restart.sh, …) and update platform docs that name the old location."
+          - "5) Commit the ledger entry if not already done."

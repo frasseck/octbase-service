@@ -25,7 +25,7 @@
           - client is defined
           - name == client
           - name is match('^[a-z][a-z0-9-]{1,27}$')
-          - name not in ['www', 'dev', 'demo', 'mail', 'api', 'octbase', 'admin']
+          - name not in ['www', 'dev', 'mail', 'api', 'octbase', 'admin']
           - edition | lower in ['team', 'business', 'enterprise']
           - not ((jira_import | default(false)) and edition | lower == 'team')
           - max_users | int >= 1

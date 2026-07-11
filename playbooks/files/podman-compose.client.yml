@@ -13,8 +13,11 @@ services:
   octbase-api:
     environment:
       # Production hardening — the API refuses to start without a strong JWT
-      # secret once demo mode is off.
-      OCTBASE_DEMO_MODE: "false"
+      # secret once demo mode is off. Fail-closed .env passthrough: env.j2
+      # writes OCTBASE_DEMO_MODE=false for clients; only the platform's own
+      # ledger-managed demo instance flips it to true in its .env (seeded
+      # demo logins are that instance's purpose).
+      OCTBASE_DEMO_MODE: "${OCTBASE_DEMO_MODE:-false}"
       OCTBASE_SECURE_COOKIES: "true"
       OCTBASE_CORS_ORIGIN: "${OCTBASE_CORS_ORIGIN}"
       OCTBASE_JWT_ACCESS_TTL: "${OCTBASE_JWT_ACCESS_TTL:-15m}"

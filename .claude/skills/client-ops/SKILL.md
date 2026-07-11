@@ -40,9 +40,10 @@ ansible-playbook playbooks/create-instance.yml -e client=acme
 ```
 
 Constraints encoded in `ledger.py` (don't work around them): name =
-`^[a-z][a-z0-9-]{1,27}$`, not in the reserved set (`www dev demo mail api
-octbase admin`); `jira_import` only bookable on `business` (included in
-enterprise, never on team); ports auto-allocated from 8110 in blocks of 10.
+`^[a-z][a-z0-9-]{1,27}$`, not in the reserved set (`www dev mail api
+octbase admin` — `demo` is a ledger-managed instance since 2026-07-11);
+`jira_import` only bookable on `business` (included in enterprise, never on
+team); ports auto-allocated from 8110 in blocks of 10.
 
 Then two **manual** steps the playbook prints: DNS A/AAAA record for
 `acme.ocete.ch`, and including the generated edge snippet
@@ -88,8 +89,15 @@ is deployed. Then, in this repo:
   manually remove DNS, reload the edge, and set `status: removed` in the
   ledger file — **keep the file** (historical record).
 
+## Move / rename
+
+Moving an installation to its own account and/or a new domain (including
+adopting the legacy demo stack) is `migrate-instance.yml` — see the
+`migrate-instance` skill, not a manual procedure.
+
 ## Related
 
+- Moving/renaming an instance, demo adoption → `migrate-instance`
 - Validating playbook/template edits before they ship → `playbook-check`
 - Cross-repo contract review after changes → `consistency-check`
 - Fleet/monitoring/backup state → `fleet-health`

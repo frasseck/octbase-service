@@ -52,3 +52,7 @@ client_app_subdir: octbase
 edge_snippet_dir: /etc/octbase/edge
 clients_registry_dir: /etc/octbase/clients.d
 backup_dir: /var/backups/octbase
+# The root-managed edge reverse proxy's config. Only migrate-instance.yml
+# edits it (snippet import + retiring a moved domain's hardcoded vhost);
+# everything else just generates snippets for it.
+edge_caddyfile: /etc/caddy/Caddyfile
