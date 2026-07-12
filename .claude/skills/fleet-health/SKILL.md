@@ -26,14 +26,27 @@ ls -lt ~/backups/*/ | head                           # dumps per stack (octbase_
 
 A healthy run logs a **restore test OK** line per stack (throwaway Postgres,
 table + user count compared to source). No restore-test line, or a missing
-day, is a finding. Known limitation (readiness plan B1): DB only, same-disk,
-no attachments, no off-host copy.
+day, is a finding. This job covers only the `claude` account's resident
+stacks (rootless podman is per-user).
+
+## Fleet backups (client instances; once installed via install-backup.yml)
+
+```bash
+systemctl list-timers | grep octbase-fleet-backup      # root timer, daily 04:00
+tail -20 /var/backups/octbase/fleet/backup.log         # per-run log; restore test per client
+journalctl -u octbase-fleet-backup.service -n 50
+```
+
+Per client: `pg_dump -Fc` + restore test + attachments/`.env` tar under
+`/var/backups/octbase/fleet/<name>/`. Off-host sync runs only when
+`backup_offhost_cmd` is set (readiness plan B1 — "not configured" in the log
+is a known open item, not a failure).
 
 ## Fleet monitor (once installed)
 
 ```bash
 sudo /usr/local/lib/octbase/monitor-all.sh --print   # ad-hoc fleet status
-cat /var/lib/octbase-monitor/status.json             # machine-readable: OK|DEGRADED|DOWN per client
+cat /var/lib/octbase-monitor/status.json             # machine-readable: OK|DEGRADED|DOWN + disk_bytes/disk_pct per client
 journalctl -u octbase-monitor.service -n 50          # runs every 5 min; alerts on state change
 ls /etc/octbase/clients.d/                           # registered clients (maintained by playbooks)
 ```

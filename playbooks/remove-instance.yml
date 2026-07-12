@@ -31,6 +31,10 @@
           - confirm == client
         fail_msg: "Refusing: pass -e confirm={{ client | default('<name>') }} to really remove this client."
 
+    - name: Scope the play to the client's host
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (host | default(default_client_host))
+
   tasks:
     # First, so a monitor run during the teardown window doesn't fire a
     # spurious DOWN alert for a client we are deliberately removing. (If the
@@ -128,6 +132,11 @@
           retries: 3
           delay: 5
           until: userdel is succeeded
+
+        - name: Remove the account's resource-cap slice drop-in
+          ansible.builtin.file:
+            path: "/etc/systemd/system/user-{{ client_uid }}.slice.d"
+            state: absent
 
     - name: Remove edge vhost snippet
       ansible.builtin.file:

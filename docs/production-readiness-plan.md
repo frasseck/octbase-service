@@ -31,20 +31,24 @@ database only; attachments are captured solely in the offboarding snapshot.
 A disk failure or ransomware event loses data *and* backup together.
 
 Plan:
-1. **Attachments into the nightly rotation.** Extend the backup job to tar
-   each stack's attachments directory alongside its dump. For client stacks
-   this must run per client account (or as root): add a per-tenant
-   `octbase-backup` user unit to `create-instance.yml` (hosting-concept §9.5)
-   rather than widening the host-level script's privileges.
-2. **Off-host, versioned copy.** Sync `~/backups` (and the per-tenant
-   equivalents) after each run to object storage in Germany — encrypted
-   client-side (e.g. `rclone` with a crypt remote or `restic`), with
-   bucket-side versioning/immutability so a compromised host cannot destroy
-   history. Credentials live only on the host, write-only if the provider
-   supports it.
-3. **Keep the restore test mandatory.** The existing throwaway-Postgres
-   restore verification stays the definition of "a backup happened"; add a
-   periodic (monthly) restore test *from the off-host copy*.
+1. **Attachments into the nightly rotation** — ✅ done 2026-07-12: the
+   root-level fleet backup (`backup/backup-fleet.sh` via
+   `install-backup.yml`) dumps every registered client's DB (with the
+   mandatory restore test) *and* archives attachments + `.env`, per client,
+   nightly. Root-level rather than per-tenant units because rootless podman
+   is per-user — one account cannot see the others' containers.
+2. **Off-host, versioned copy — still open.** Set `backup_offhost_cmd`
+   (group_vars → `install-backup.yml`) to sync the backup roots after each
+   run to object storage in Germany — encrypted client-side (e.g. `rclone`
+   with a crypt remote or `restic`), with bucket-side
+   versioning/immutability so a compromised host cannot destroy history.
+   Credentials live only on the host, write-only if the provider supports
+   it. The hook exists and fails the unit loudly; the destination decision
+   and credentials are what's missing.
+3. **Keep the restore test mandatory.** The throwaway-Postgres restore
+   verification stays the definition of "a backup happened" (fleet script
+   included); add a periodic (monthly) restore test *from the off-host copy*
+   once 2. exists.
 
 **Accept when:** a nightly run produces DB dump + attachments per stack, the
 off-host copy exists with independent versioning, a file deleted locally is
@@ -113,9 +117,11 @@ client resources, and dev/demo carry known credentials by design. Provision
 a dedicated production node (the tooling already assumes remote SSH:
 `inventory/hosts.yml`), install monitoring + backups there, and keep
 dev/demo on the current host. Move `canary` first; it validates the
-migration procedure clients will later follow
-(`playbooks/migrate-instance.yml` is the tool — same-host moves are what it
-does today; cross-host is the gap to close here).
+migration procedure clients will later follow. Tooling is in place since
+2026-07-12: add the node to `inventory/hosts.yml`, run the two install
+playbooks, set the ledger `host:`, run `playbooks/migrate-host.yml`
+(admin-machine-staged; see `docs/fleet-concept.md`) — what remains here is
+the actual node, its edge Caddy and the first real cross-host move.
 
 ### S2 — Secrets hygiene  *(½ day)*
 `smtp_pass` into Ansible Vault (the group_vars comment already demands it);
@@ -141,10 +147,11 @@ concept §7.
 ## Phase 2 — maturity (as the client base grows)
 
 Triggered by growth, not by the calendar — thresholds per hosting-concept
-§14: suspend/resume playbook (README known gap), Postgres major-upgrade
-procedure (the `:18` pin is deliberate — plan the 18→19 migration before it
-is forced), packed-node capacity management via the §7 resource limits, and
-the Model B/C decision once a client demands HA or the node fills up.
+§14: Postgres major-upgrade procedure (the `:18` pin is deliberate — plan
+the 18→19 migration before it is forced), packed-node capacity management
+(the per-account slice caps + disk quotas from 2026-07-12 are the knobs;
+`suspend-instance.yml` exists), and the Model B/C decision once a client
+demands HA or the node fills up.
 
 ## Parallel track — organizational (not code, still gating B2B sales)
 

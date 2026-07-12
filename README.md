@@ -1,18 +1,25 @@
 # octbase-service
 
-Operations toolkit for running **one Octbase stack per client** on the ocete.ch
-production host. It implements the stack-per-tenant model recommended in the
-app repo's `docs/hosting-concept.md` (§5 Model A / §16 O1):
+Operations toolkit for running **one Octbase stack per client** across the
+ocete.ch production host(s). It implements the stack-per-tenant model
+recommended in the app repo's `docs/hosting-concept.md` (§5 Model A / §16 O1);
+the multi-host model is [`docs/fleet-concept.md`](docs/fleet-concept.md):
 
 - every client gets a **dedicated Linux account** `oct-<name>` running its own
-  rootless-podman stack (Postgres + API + frontend + mobile),
-- a **subdomain** `<name>.ocete.ch` is routed by the host's edge reverse proxy
-  to that client's frontend port (DNS entries are created manually),
+  rootless-podman stack (Postgres + API + frontend + mobile), capped by a
+  **systemd user-slice** (memory/CPU/tasks) and a **disk quota** — both
+  ledger-managed, changeable at any time (`set-resources.yml`),
+- each instance is **pinned to one inventory host** (`host:` in its ledger
+  entry); every per-client playbook scopes itself to that host, and
+  `migrate-host.yml` moves an instance between hosts,
+- a **subdomain** `<name>.ocete.ch` is routed by that host's edge reverse
+  proxy to the client's frontend port (DNS entries are created manually),
 - a **git-versioned ledger** (`ledger/clients/*.yml`) is the single source of
   truth for who the clients are, which edition they booked, add-ons, seats,
-  registration date — and it directly drives the Ansible playbooks,
-- **monitoring** aggregates the app repo's `check-health.sh` across all client
-  stacks every 5 minutes and alerts on state changes,
+  resources, placement — and it directly drives the Ansible playbooks,
+- **monitoring** aggregates the app repo's `check-health.sh` plus per-client
+  disk usage across all client stacks every 5 minutes and alerts on state
+  changes; **fleet backups** dump + restore-test every client nightly,
 - all of it is driven by **Ansible playbooks run from a local admin machine**.
 
 ```
@@ -48,15 +55,22 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `playbooks/create-instance.yml` | Create **or update** a client instance from its ledger entry |
 | `playbooks/sync-instance.yml` | Sync an existing instance's code to an app-repo branch (default `main`), rebuild + restart |
 | `playbooks/remove-instance.yml` | Back up and remove a client instance (needs `confirm=`) |
-| `playbooks/migrate-instance.yml` | Move an existing installation to its own client account and/or a new domain |
+| `playbooks/migrate-instance.yml` | Move an existing installation to its own client account and/or a new domain (same host) |
+| `playbooks/migrate-host.yml` | Move a client instance to **another host** (staged via the admin machine) |
+| `playbooks/suspend-instance.yml` | Stop a `status: suspended` client non-destructively; domain answers 503 |
 | `playbooks/set-max-users.yml` | Set `OCTBASE_MAX_USERS` for a client and restart its stack |
-| `playbooks/install-monitoring.yml` | Install the fleet monitor (script + systemd timer) on the host |
-| `playbooks/templates/` | `.env`, systemd user unit, edge Caddy vhost templates |
+| `playbooks/set-resources.yml` | Apply a client's memory/CPU/tasks caps + disk quota, no redeploy |
+| `playbooks/install-monitoring.yml` | Install the fleet monitor (script + systemd timer) on every host |
+| `playbooks/install-backup.yml` | Install the nightly fleet backup (script + systemd timer) on every host |
+| `playbooks/templates/` | `.env`, systemd user unit + slice drop-in, edge Caddy vhost templates |
 | `playbooks/files/podman-compose.client.yml` | Production compose override (see below) |
-| `monitoring/monitor-all.sh` | Root-level aggregator that probes every client stack |
+| `monitoring/monitor-all.sh` | Root-level aggregator that probes every client stack (health + disk) |
 | `monitoring/octbase-monitor.{service,timer}` | systemd units for the 5-minute monitor run |
-| `backup/backup-octbase.sh` | Daily DB backup with an automated restore test |
-| `backup/octbase-backup.{service,timer}` | systemd user units for the nightly backup run |
+| `backup/backup-fleet.sh` | Nightly per-client DB dump + restore test + attachments/`.env` archive |
+| `backup/octbase-fleet-backup.{service,timer}` | Root systemd units for the nightly fleet backup |
+| `backup/backup-octbase.sh` | Legacy daily DB backup (claude account) for the resident dev/demo stacks |
+| `backup/octbase-backup.{service,timer}` | systemd user units for that legacy nightly run |
+| `docs/fleet-concept.md` | The multi-instance / multi-host model: placement, resources, quotas, backups, moves |
 | `docs/platform-overview.md` | The whole platform: all four repos, host topology, release flow, doc map |
 | `docs/consistency-register.md` | Cross-repo contracts that must stay in sync + known drift, with a per-release checklist |
 | `docs/production-readiness-plan.md` | The ordered plan to production: launch blockers, structural phase, go/no-go gate for client #1 |
@@ -65,8 +79,10 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 ## Prerequisites
 
 **Admin machine** (where you run the playbooks):
-- Ansible ≥ 2.14 (with the bundled `ansible.posix` collection), `rsync`,
-  `openssl`, Python 3 with PyYAML (Ansible brings it).
+- ansible-core ≥ 2.16 (with the `ansible.posix` collection), `rsync`,
+  `openssl`, Python 3 with PyYAML (Ansible brings it). The playbooks use
+  `ansible.builtin.systemd_service`, which does not exist before core 2.15 —
+  don't trust older docs that claimed 2.14 worked.
 - A checkout of the app repo (`frasseck/octbase.git`) at the release you want
   to ship. Its path is `octbase_src` in `inventory/group_vars/all.yml`.
 - SSH root access to the production host (or a sudo user — then set
@@ -92,7 +108,12 @@ max_users: 25              # → OCTBASE_MAX_USERS
 registered: 2026-07-10
 status: active             # active | suspended | removed
 app_version: "1.0.1"       # → OCTBASE_APP_VERSION stamp
-ports:                     # unique per client, allocated by ledger.py
+host: prod                 # inventory host the instance runs on
+disk_quota_gb: 10          # account disk quota (enforced where fs allows, always monitored)
+resources:                 # optional — account caps (systemd user slice);
+  memory_max: 4G           #   omitted keys use client_default_resources
+  cpu_quota: 300%          #   from group_vars
+ports:                     # unique across the fleet, allocated by ledger.py
   frontend: 8110
   api: 8111
   postgres: 8112
@@ -205,6 +226,67 @@ containers are recreated so the env change takes effect) and re-checks
 > `.env` and restart for one-off deals — they are deliberately not
 > ledger-managed.
 
+### Give or take resources (memory / CPU / tasks / disk)
+
+Edit the client's `resources:` block and/or `disk_quota_gb` in the ledger,
+commit, and apply — no redeploy, no restart, takes effect immediately:
+
+```bash
+ansible-playbook playbooks/set-resources.yml -e client=acme
+```
+
+Ad-hoc overrides (update the ledger afterwards):
+
+```bash
+ansible-playbook playbooks/set-resources.yml -e client=acme \
+    -e memory_max=4G -e cpu_quota=300% -e disk_quota_gb=20
+```
+
+The caps apply to the whole `oct-acme` account (systemd slice
+`user-<uid>.slice`): all four containers plus image builds. The disk quota is
+enforced via filesystem user quota where the host filesystem has `usrquota`
+enabled (the playbook warns when it can't) — and is *always* monitored: the
+fleet monitor flags the client DEGRADED (state-change mail) at 90% usage.
+Verify live: `systemctl show user-<uid>.slice -p MemoryCurrent,MemoryMax`.
+
+### Suspend / resume a client
+
+Suspend keeps account, data and secrets, stops the stack, deregisters
+monitoring and serves 503 at the edge:
+
+```bash
+# 1) set status: suspended in ledger/clients/acme.yml, commit
+ansible-playbook playbooks/suspend-instance.yml -e client=acme -e confirm=acme
+# 2) reload the edge proxy (manual, root)
+```
+
+Resume: set `status: active`, commit, `create-instance.yml` (restarts the
+stack, re-registers monitoring, rewrites the real vhost), reload the edge.
+Note: suspended instances are not in the monitor/backup registry — take a
+manual backup first if the suspension may end in offboarding.
+
+### Move an instance to another host
+
+Placement is the `host:` field in the ledger (see `inventory/hosts.yml` for
+valid names; the model is `docs/fleet-concept.md`). To move client `acme`
+from `prod` to `prod2`:
+
+```bash
+# 1) edit ledger/clients/acme.yml → host: prod2, validate, commit
+# 2) octbase_src must be at the client's release (schema ≥ the source's)
+ansible-playbook playbooks/migrate-host.yml \
+    -e client=acme -e source_host=prod -e confirm=acme
+```
+
+The playbook freezes and dumps the source, stages DB + attachments + `.env`
+through the **admin machine** (no host↔host SSH trust needed), provisions the
+target via `create-instance.yml` (fresh account, ports from the ledger,
+slice caps, quota), restores the data, carries the JWT/SCM/MFA secrets, and
+health-gates. Then, manually: repoint the DNS record (lower its TTL before
+the move), reload both edge proxies, and remove the stopped source account
+after verification. Downtime spans from the freeze to the health check plus
+DNS propagation.
+
 ### Offboard a client
 
 ```bash
@@ -250,16 +332,20 @@ Install once (and re-run after changing monitor settings in group_vars):
 ansible-playbook playbooks/install-monitoring.yml
 ```
 
-What it does on the host:
+What it does on each host:
 - installs the app repo's `octbase-operations/check-health.sh` (two-layer
   container + application probe, JSON output) to `/usr/local/lib/octbase/`,
 - installs `monitor-all.sh`, which every 5 minutes (systemd timer
   `octbase-monitor.timer`) iterates all registered clients
   (`/etc/octbase/clients.d/*.conf`, maintained by the playbooks), runs
-  `check-health.sh` inside each client's rootless-podman context, and
-  additionally probes the public edge (`https://<name>.ocete.ch/health`),
+  `check-health.sh` inside each client's rootless-podman context,
+  probes the public edge (`https://<name>.ocete.ch/health`), and checks
+  each client's **disk usage** (cached `du` of the home directory, refreshed
+  hourly) against its ledger quota — ≥ `disk_alert_pct` (default 90%) flags
+  the client DEGRADED,
 - writes the fleet state to `/var/lib/octbase-monitor/status.json`
-  (machine-readable, one object per client: `OK | DEGRADED | DOWN`),
+  (machine-readable, one object per client: `OK | DEGRADED | DOWN`, plus
+  `disk_bytes` / `disk_pct`),
 - on any **state change** sends a mail via the local `sendmail` to
   `alert_email` (set it in `inventory/group_vars/all.yml`) and always logs to
   the journal: `journalctl -u octbase-monitor.service`.
@@ -274,6 +360,35 @@ live). The global default is `edge_probe` in `inventory/group_vars/all.yml`.
 For external ("is the site reachable at all") coverage, point any uptime
 service at `https://<name>.ocete.ch/health` — the same endpoint the monitor
 uses.
+
+## Fleet backups
+
+Install once per host (and re-run after changing backup settings in
+group_vars):
+
+```bash
+ansible-playbook playbooks/install-backup.yml
+```
+
+Every night (systemd timer `octbase-fleet-backup.timer`, 04:00) the root-level
+`backup-fleet.sh` iterates the same client registry the monitor uses and, per
+client: dumps the database (`pg_dump -Fc`), **restore-tests the dump** into a
+throwaway Postgres (same pinned major, `backup_test_image` — a backup that
+never restored is a hope, not a backup), archives attachments + `.env`, and
+prunes files older than `backup_retention_days`. Root is not a convenience
+here: rootless podman is per-user, so no single account can see all client
+containers. Results: `{{ fleet_backup_root }}/<client>/` + `backup.log`;
+failures exit non-zero so systemd surfaces them.
+
+Off-host copies: set `backup_offhost_cmd` in `inventory/group_vars/all.yml`
+(e.g. an `rclone sync` to versioned, client-side-encrypted object storage)
+and re-run the install playbook — the command runs after every backup and its
+failure fails the unit. Until it is set, backups stay on the host they
+protect (readiness plan B1 stays open).
+
+The legacy `backup/backup-octbase.sh` (claude account, 03:30 timer) keeps
+covering the resident dev/demo stacks — it cannot see client accounts'
+containers, which is exactly why the fleet job exists.
 
 ## Production settings — the compose override
 
@@ -333,16 +448,17 @@ The prioritized, acceptance-criteria'd version of this list — including what
 must land **before the first paying client** — is
 [`docs/production-readiness-plan.md`](docs/production-readiness-plan.md).
 
-- **Backups**: host-level DB backups with an automated restore test now run
-  nightly (`backup/`, systemd timer `octbase-backup.timer` at 03:30; dumps in
-  `/home/claude/backups`). Still open: fold this into the per-client model
-  (attachments rsync + an off-host/immutable copy, hosting-concept §9.5) and
-  wire it into the Ansible playbooks per tenant.
+- **Off-host backups**: the per-client nightly backup (DB + restore test +
+  attachments + `.env`) is implemented (`install-backup.yml`), but
+  `backup_offhost_cmd` is not configured yet — until an encrypted, versioned
+  off-host destination is set, backups die with the disk they protect
+  (readiness plan B1).
+- **Filesystem quotas**: `disk_quota_gb` is enforced only where the
+  filesystem has `usrquota` enabled; on the current host it is monitor-only.
+  Decide per host whether to enable `usrquota` on `/home`
+  (fleet-concept §3).
 - **Image builds**: each client account builds its own images from the synced
   source (~identical work per client). At ~10+ clients, build once and
   distribute via a registry or `podman save|load` — the app repo's CI already
   publishes per-commit images to GHCR on every `main` push, which is the
   natural starting point.
-- **Suspend**: `status: suspended` is tracked in the ledger and blocks
-  `create-instance.yml`, but there is no playbook yet that stops a running
-  stack without removing it (`systemctl --user stop octbase` manually).

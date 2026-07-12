@@ -42,7 +42,7 @@ so until that runs the table below is still the live state.
 | Demo `demo.ocete.ch` | `octbase` | `octbase.service` | postgres 5432 · api 8000 · frontend 8080 |
 | Dev `dev.ocete.ch` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
 | DB backup | — | `octbase-backup.timer` (daily 03:30) | — |
-| Client `<name>` (future) | `octbase` (per account) | per-user `octbase.service`, root `octbase-monitor.timer` | frontend/api/postgres blocks from 8110, loopback-only |
+| Client `<name>` (future) | `octbase` (per account) | per-user `octbase.service`, root `octbase-monitor.timer` + `octbase-fleet-backup.timer` | frontend/api/postgres blocks from 8110, loopback-only |
 
 Also on the host: `~/restart.sh` (rebuilds the three stacks; for demo it
 `git pull`s first), `~/credentials/` (the real `.env` files for dev and

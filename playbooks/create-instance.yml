@@ -43,6 +43,18 @@
           Ledger entry for '{{ client | default('?') }}' is invalid or not
           'active' — run ./ledger/ledger.py validate.
 
+    # ── Host scoping: the instance lives on exactly one inventory host ──
+    - name: Client host must exist in the inventory
+      ansible.builtin.assert:
+        that: (client_ledger.host | default(default_client_host)) in groups['octbase_hosts']
+        fail_msg: >-
+          Ledger host '{{ client_ledger.host | default(default_client_host) }}'
+          is not in inventory/hosts.yml — fix the ledger entry (or the inventory).
+
+    - name: Scope the play to the client's host
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (client_ledger.host | default(default_client_host))
+
     # Generated on the admin machine; only used the first time the .env is
     # written (the template task below never overwrites an existing file).
     - name: Generate initial secrets
@@ -80,6 +92,59 @@
       ansible.builtin.file:
         path: "{{ home_dir }}"
         mode: "0750"
+
+    # ── Account-level resource caps (docs/fleet-concept.md §2) ──
+    - name: Set resource / disk-quota facts
+      ansible.builtin.set_fact:
+        client_resources: "{{ client_default_resources | combine(client_ledger.resources | default({})) }}"
+        client_disk_quota_gb: "{{ client_ledger.disk_quota_gb | default(default_disk_quota_gb) }}"
+
+    - name: Ensure the user-slice drop-in directory exists
+      ansible.builtin.file:
+        path: "/etc/systemd/system/user-{{ client_uid }}.slice.d"
+        state: directory
+        mode: "0755"
+
+    - name: Apply account resource caps (systemd user-slice drop-in)
+      ansible.builtin.template:
+        src: user-slice.j2
+        dest: "/etc/systemd/system/user-{{ client_uid }}.slice.d/99-octbase.conf"
+        mode: "0644"
+      register: slice_dropin
+
+    - name: Reload systemd to apply the slice caps
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: slice_dropin.changed
+
+    # ── Disk quota: enforce where the filesystem can, monitor always ──
+    - name: Find the filesystem holding the client home
+      ansible.builtin.command:
+        cmd: df --output=target {{ home_dir }}
+      register: home_mount
+      changed_when: false
+
+    - name: Apply the filesystem user quota (soft 90% / hard 100%)
+      ansible.builtin.command:
+        cmd: >-
+          setquota -u {{ linux_user }}
+          {{ ((client_disk_quota_gb | int) * 1024 * 1024 * 0.9) | int }}
+          {{ (client_disk_quota_gb | int) * 1024 * 1024 }}
+          0 0 {{ home_mount.stdout_lines | last | trim }}
+      register: quota_set
+      changed_when: quota_set.rc == 0
+      failed_when: false
+
+    - name: Warn when the filesystem cannot enforce the quota
+      ansible.builtin.debug:
+        msg: >-
+          Filesystem user quota NOT enforced for {{ linux_user }}
+          (setquota failed: {{ quota_set.stderr | default('') | trim | default('not available', true) }}).
+          Usage is still monitored and alerts at {{ disk_alert_pct }}% of
+          {{ client_disk_quota_gb }} GB — enable usrquota on
+          {{ home_mount.stdout_lines | last | trim }} to enforce
+          (docs/fleet-concept.md §3).
+      when: quota_set.rc != 0
 
     - name: Sync application source from admin machine
       ansible.posix.synchronize:

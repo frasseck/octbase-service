@@ -118,18 +118,34 @@ Re-running on the branch tip is a no-op. Constraints an agent must respect:
 
 ## Suspend / offboard
 
-- `status: suspended` in the ledger blocks `create-instance.yml`, but no
-  playbook stops a running stack yet — that is manual
-  (`systemctl --user stop octbase` as the client user; known gap).
+- Suspend: set `status: suspended` in the ledger (commit), then
+  `suspend-instance.yml -e client=acme -e confirm=acme` — stops + disables
+  the stack non-destructively, deregisters monitoring, serves 503 at the
+  edge (manual edge reload afterwards). Resume: `status: active` +
+  `create-instance.yml` + edge reload. Suspended instances drop out of the
+  nightly fleet backup — suggest a final manual backup when the suspension
+  may end in offboarding.
 - Offboard: `remove-instance.yml -e client=acme -e confirm=acme`, then
   manually remove DNS, reload the edge, and set `status: removed` in the
   ledger file — **keep the file** (historical record).
 
+## Resources / disk quota
+
+Account-level caps (memory/CPU/tasks via the systemd user slice) and the
+disk quota live in the ledger (`resources:` block, `disk_quota_gb`; defaults
+in group_vars). Apply without a redeploy:
+`set-resources.yml -e client=acme` (extra-vars `memory_max=`/`cpu_quota=`/
+`tasks_max=`/`disk_quota_gb=` override ad-hoc — remind the user to update
+the ledger afterwards). The monitor alerts at 90% of the disk quota.
+
 ## Move / rename
 
-Moving an installation to its own account and/or a new domain (including
-adopting the legacy demo stack) is `migrate-instance.yml` — see the
-`migrate-instance` skill, not a manual procedure.
+Moving an installation to its own account and/or a new domain **on the same
+host** (including adopting the legacy demo stack) is `migrate-instance.yml`
+— see the `migrate-instance` skill. Moving an instance to **another host**
+is `migrate-host.yml`: edit `host:` in the ledger first, then
+`-e client=<name> -e source_host=<old> -e confirm=<name>`
+(README runbook + `docs/fleet-concept.md`). Neither is a manual procedure.
 
 ## Related
 

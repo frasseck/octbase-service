@@ -60,6 +60,18 @@
           Pass -e client=<target ledger name> and confirm with exactly that
           name; source domain/account look wrong otherwise.
 
+    # This playbook moves an installation WITHIN one host (adoption/rename);
+    # source and target share the machine named by the target's ledger entry.
+    # Cross-host moves are migrate-host.yml's job.
+    - name: Load client ledger entry (host scoping)
+      ansible.builtin.include_vars:
+        file: "../ledger/clients/{{ client }}.yml"
+        name: client_ledger_scope
+
+    - name: Scope the play to the client's host
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (client_ledger_scope.host | default(default_client_host))
+
     # set_fact (not play vars): phase 3 is a separate play and only host
     # facts survive across plays.
     - name: Resolve and remember the source
@@ -369,7 +381,7 @@
 # Phase 2: provision the target exactly like any new client — account,
 # linger, source sync, .env with fresh secrets, build, systemd user unit,
 # health gate, monitor registration, edge snippet.
-- import_playbook: create-instance.yml
+- ansible.builtin.import_playbook: create-instance.yml
   vars:
     # Migration runs on the platform host itself: reuse the source checkout
     # already present there instead of requiring admin-machine octbase_src.
@@ -402,6 +414,10 @@
     - name: Normalize client ledger variable
       ansible.builtin.set_fact:
         client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
+
+    - name: Scope the play to the client's host
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (client_ledger.host | default(default_client_host))
 
     - name: Phase 1 must have run in this same invocation
       ansible.builtin.assert:

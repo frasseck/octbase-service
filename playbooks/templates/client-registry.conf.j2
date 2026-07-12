@@ -4,7 +4,10 @@ USER_ACCT={{ linux_user }}
 DOMAIN={{ fqdn }}
 FRONTEND_PORT={{ client_ledger.ports.frontend }}
 API_PORT={{ client_ledger.ports.api }}
-{% if monitor_edge_probe is defined %}
+HOME_DIR={{ home_dir }}
+DISK_QUOTA_GB={{ client_disk_quota_gb }}
+{% set mep = client_ledger.monitor_edge_probe | default(none) %}
+{% if mep is not none %}
 # Per-client override of the global edge_probe (ledger: monitor_edge_probe).
-EDGE_PROBE={{ '1' if (monitor_edge_probe | bool) else '0' }}
+EDGE_PROBE={{ '1' if (mep | bool) else '0' }}
 {% endif %}

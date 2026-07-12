@@ -1,0 +1,85 @@
+---
+# Suspend a client instance NON-destructively: stop and disable its stack,
+# deregister it from monitoring, and have its domain answer 503 instead of a
+# broken 502. Data, account, .env and secrets stay untouched.
+#
+# Workflow (the ledger stays the source of truth):
+#   1. set `status: suspended` in ledger/clients/<name>.yml, commit
+#   2. ansible-playbook playbooks/suspend-instance.yml -e client=acme -e confirm=acme
+#
+# Resume: set `status: active`, commit, run create-instance.yml — it restarts
+# the stack, re-registers monitoring and rewrites the real edge vhost.
+- name: Suspend Octbase client instance
+  hosts: octbase_hosts
+  become: true
+  vars:
+    linux_user: "{{ client_user_prefix }}{{ client }}"
+    fqdn: "{{ client }}.{{ base_domain }}"
+
+  pre_tasks:
+    - name: Load client ledger entry
+      ansible.builtin.include_vars:
+        file: "../ledger/clients/{{ client }}.yml"
+        name: client_ledger
+      register: client_ledger_loaded
+
+    - name: Normalize client ledger variable
+      ansible.builtin.set_fact:
+        client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
+
+    - name: Require confirmation and a suspended ledger entry
+      ansible.builtin.assert:
+        that:
+          - client is defined
+          - confirm is defined and confirm == client
+          - client_ledger.status == 'suspended'
+        fail_msg: >-
+          Refusing: set status: suspended in ledger/clients/{{ client | default('<name>') }}.yml
+          (commit it) and pass -e confirm={{ client | default('<name>') }}.
+
+    - name: Scope the play to the client's host
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (client_ledger.host | default(default_client_host))
+
+    - name: Look up the client account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ linux_user }}"
+
+    - name: Set client runtime facts
+      ansible.builtin.set_fact:
+        client_uid: "{{ ansible_facts['getent_passwd'][linux_user][1] }}"
+        user_env:
+          XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['getent_passwd'][linux_user][1] }}"
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_facts['getent_passwd'][linux_user][1] }}/bus"
+
+  tasks:
+    # First, so a monitor run during the stop doesn't fire a DOWN alert for
+    # an instance we are deliberately suspending.
+    - name: Deregister from monitoring
+      ansible.builtin.file:
+        path: "{{ clients_registry_dir }}/{{ client }}.conf"
+        state: absent
+
+    - name: Stop and disable the stack (data stays in place)
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.systemd_service:
+        name: octbase
+        scope: user
+        enabled: false
+        state: stopped
+
+    - name: Serve 503 at the edge instead of a dead upstream
+      ansible.builtin.template:
+        src: caddy-vhost-suspended.j2
+        dest: "{{ edge_snippet_dir }}/{{ client }}.caddy"
+        mode: "0644"
+
+    - name: Manual follow-up steps
+      ansible.builtin.debug:
+        msg:
+          - "{{ fqdn }} suspended: stack stopped+disabled, monitor deregistered, edge snippet now answers 503."
+          - "1) Edge proxy: reload it so the 503 vhost takes effect."
+          - "2) Nightly fleet backups skip suspended instances (no registry entry) — take a final manual backup first if the suspension may become an offboarding."
+          - "3) Resume: status: active in the ledger, commit, run create-instance.yml, reload the edge."

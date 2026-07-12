@@ -43,6 +43,7 @@
           # Managed by octbase-service / install-monitoring.yml
           ALERT_EMAIL={{ alert_email }}
           EDGE_PROBE={{ '1' if (edge_probe | bool) else '0' }}
+          DISK_ALERT_PCT={{ disk_alert_pct }}
 
     - name: Install systemd units
       ansible.builtin.copy:

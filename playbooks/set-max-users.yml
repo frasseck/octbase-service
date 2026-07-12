@@ -25,6 +25,10 @@
           - max_users | int >= 1
         fail_msg: "max_users must be a positive integer"
 
+    - name: Scope the play to the client's host
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (host | default(default_client_host))
+
   tasks:
     - name: Look up the client account
       ansible.builtin.getent:

@@ -4,6 +4,11 @@
 # Public base domain; a client "acme" is served at acme.ocete.ch.
 base_domain: ocete.ch
 
+# Inventory host a client runs on when its ledger entry has no `host:` field
+# (must be a name from inventory/hosts.yml). Per-client playbooks scope
+# themselves to the client's host and no-op on every other one.
+default_client_host: prod
+
 # Path ON THE ADMIN MACHINE to a checkout of the app repo
 # (frasseck/octbase.git) at the release you want to deploy. The create
 # playbook rsyncs this working tree AS-IS to the client account — make sure
@@ -42,6 +47,35 @@ octbase_trusted_proxies: "10.89.0.0/16"
 # GDPR retention windows (days) applied to every client stack.
 audit_retention_days: 365
 activity_retention_days: 365
+
+# ── Resources & disk (per client account) ─────────────────
+# Platform defaults for the systemd user-slice caps applied to every client
+# account (all containers + image builds count against them). A ledger entry
+# overrides individual keys via its `resources:` block; apply changes with
+# create-instance.yml or, without a redeploy, set-resources.yml.
+client_default_resources:
+  memory_max: 2G     # systemd MemoryMax
+  cpu_quota: 200%    # systemd CPUQuota (100% = one core)
+  tasks_max: 512     # systemd TasksMax
+# Disk quota (GB) when a ledger entry has no disk_quota_gb. Enforced via
+# filesystem user quota where available; always monitored (alert below).
+default_disk_quota_gb: 10
+# The fleet monitor flags a client DEGRADED (state-change mail) when its
+# home directory reaches this percentage of its disk quota.
+disk_alert_pct: 90
+
+# ── Fleet backups (per host, root-driven; install-backup.yml) ─
+# Where backup-fleet.sh writes per-client dumps + file archives on each host.
+fleet_backup_root: /var/backups/octbase/fleet
+# Days to keep nightly per-client backups.
+backup_retention_days: 14
+# Postgres image for the mandatory restore test — major version must be >=
+# the clients' server major (contract C11; keep in step with the app compose).
+backup_test_image: "registry.access.redhat.com/hi/postgresql:18"
+# Optional off-host sync, run after every backup (its failure fails the run) —
+# e.g. "rclone sync /var/backups/octbase/fleet crypt-remote:octbase-backups".
+# Empty disables the sync (readiness plan B1 stays open until this is set).
+backup_offhost_cmd: ""
 
 # ── Monitoring ────────────────────────────────────────────
 # Mail recipient for state-change alerts ("" disables mail; state changes are

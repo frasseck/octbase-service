@@ -7,6 +7,9 @@
 #   1. runs check-health.sh inside the client's rootless-podman context
 #      (container layer + application /health layer),
 #   2. optionally probes the public edge: https://<domain>/health,
+#   3. measures the account's disk usage (du of HOME_DIR, cached — refreshed
+#      at most every DISK_INTERVAL seconds) against DISK_QUOTA_GB and flags
+#      DEGRADED at DISK_ALERT_PCT% of the quota,
 # then aggregates everything into /var/lib/octbase-monitor/status.json and,
 # on any per-client state CHANGE, mails ALERT_EMAIL (via sendmail) and logs
 # to stderr (→ journal).
@@ -21,6 +24,8 @@ CONF=/etc/octbase/monitor.conf
 [ -f "$CONF" ] && . "$CONF"
 ALERT_EMAIL="${ALERT_EMAIL:-}"
 EDGE_PROBE="${EDGE_PROBE:-1}"
+DISK_ALERT_PCT="${DISK_ALERT_PCT:-90}"
+DISK_INTERVAL="${DISK_INTERVAL:-3600}"   # seconds between du runs per client
 
 CHECK=/usr/local/lib/octbase/check-health.sh
 REGISTRY=/etc/octbase/clients.d
@@ -59,7 +64,7 @@ fi
 GLOBAL_EDGE_PROBE="$EDGE_PROBE"
 
 for f in "${confs[@]}"; do
-  NAME="" USER_ACCT="" DOMAIN="" FRONTEND_PORT="" API_PORT=""
+  NAME="" USER_ACCT="" DOMAIN="" FRONTEND_PORT="" API_PORT="" HOME_DIR="" DISK_QUOTA_GB=""
   EDGE_PROBE="$GLOBAL_EDGE_PROBE"
   . "$f"
   [ -n "$NAME" ] && [ -n "$USER_ACCT" ] || continue
@@ -91,6 +96,33 @@ for f in "${confs[@]}"; do
     fi
   fi
 
+  # Disk usage vs quota. du is not free, so the value is cached and refreshed
+  # at most every DISK_INTERVAL seconds; the freshest cached value is judged
+  # on every run.
+  disk_json=""
+  if [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ]; then
+    cache="$STATE_DIR/disk-$NAME"
+    now="$(date +%s)"
+    bytes="" ts=0
+    [ -f "$cache" ] && read -r bytes ts < "$cache"
+    if [ -z "$bytes" ] || [ $((now - ts)) -ge "$DISK_INTERVAL" ]; then
+      bytes="$(du -sb --one-file-system "$HOME_DIR" 2>/dev/null | cut -f1)"
+      [ -n "$bytes" ] && echo "$bytes $now" > "$cache"
+    fi
+    if [ -n "$bytes" ] && [ "${DISK_QUOTA_GB:-0}" -gt 0 ] 2>/dev/null; then
+      pct=$(( bytes * 100 / (DISK_QUOTA_GB * 1024 * 1024 * 1024) ))
+      disk_json=",\"disk_bytes\":$bytes,\"disk_quota_gb\":$DISK_QUOTA_GB,\"disk_pct\":$pct"
+      if [ "$pct" -ge "$DISK_ALERT_PCT" ]; then
+        state="$(worse "$state" DEGRADED)"
+        detail="$detail; disk ${pct}% of ${DISK_QUOTA_GB}G quota (ALERT >=${DISK_ALERT_PCT}%)"
+      else
+        detail="$detail; disk ${pct}% of ${DISK_QUOTA_GB}G"
+      fi
+    elif [ -n "$bytes" ]; then
+      disk_json=",\"disk_bytes\":$bytes"
+    fi
+  fi
+
   new_states["$NAME"]="$state"
   overall="$(worse "$overall" "$state")"
   case $state in DEGRADED) [ $exit_code -lt 1 ] && exit_code=1 ;; DOWN) exit_code=2 ;; esac
@@ -105,7 +137,7 @@ for f in "${confs[@]}"; do
 
   detail="${detail//$'\n'/ }"   # keep status.json single-line-safe
   [ -n "$json_clients" ] && json_clients="$json_clients,"
-  json_clients="$json_clients\"$NAME\":{\"state\":\"$state\",\"detail\":\"${detail//\"/\'}\"}"
+  json_clients="$json_clients\"$NAME\":{\"state\":\"$state\",\"detail\":\"${detail//\"/\'}\"$disk_json}"
   [ $PRINT -eq 1 ] && printf '%-12s %-9s %s\n' "$NAME" "$state" "$detail"
 done
 

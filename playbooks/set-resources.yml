@@ -1,0 +1,117 @@
+---
+# Apply a client's resource caps and disk quota WITHOUT a redeploy or restart.
+#
+# The values come from the ledger (edit the resources block / disk_quota_gb,
+# commit, then run):
+#   ansible-playbook playbooks/set-resources.yml -e client=acme
+#
+# Extra-vars override the ledger for ad-hoc changes (update the ledger
+# afterwards — it must stay the source of truth):
+#   ansible-playbook playbooks/set-resources.yml -e client=acme \
+#       -e memory_max=4G -e cpu_quota=300% [-e tasks_max=1024] [-e disk_quota_gb=20]
+#
+# Caps apply at the systemd user-slice level (all containers + builds of the
+# account); lowering MemoryMax below current usage makes the kernel reclaim /
+# OOM-kill inside the slice — prefer stepping down gradually. Running
+# containers keep their slice, so changes take effect immediately on reload.
+- name: Set client resource caps and disk quota
+  hosts: octbase_hosts
+  become: true
+  vars:
+    linux_user: "{{ client_user_prefix }}{{ client }}"
+    home_dir: "/home/{{ linux_user }}"
+    fqdn: "{{ client }}.{{ base_domain }}"
+
+  pre_tasks:
+    - name: Load client ledger entry
+      ansible.builtin.include_vars:
+        file: "../ledger/clients/{{ client }}.yml"
+        name: client_ledger
+      register: client_ledger_loaded
+
+    - name: Normalize client ledger variable
+      ansible.builtin.set_fact:
+        client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
+
+    - name: Scope the play to the client's host
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (client_ledger.host | default(default_client_host))
+
+    - name: Look up the client account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ linux_user }}"
+
+    - name: Set client facts (ledger merged with defaults and extra-vars)
+      ansible.builtin.set_fact:
+        client_uid: "{{ ansible_facts['getent_passwd'][linux_user][1] }}"
+        # extra-vars (only the ones actually passed) beat the ledger, which
+        # beats the platform defaults — omit inside a dict literal would NOT
+        # drop the key, hence the conditional combines.
+        client_resources: >-
+          {{ client_default_resources
+             | combine(client_ledger.resources | default({}))
+             | combine({'memory_max': memory_max} if memory_max is defined else {})
+             | combine({'cpu_quota': cpu_quota} if cpu_quota is defined else {})
+             | combine({'tasks_max': tasks_max} if tasks_max is defined else {}) }}
+        client_disk_quota_gb: "{{ disk_quota_gb | default(client_ledger.disk_quota_gb | default(default_disk_quota_gb)) }}"
+
+  tasks:
+    - name: Ensure the user-slice drop-in directory exists
+      ansible.builtin.file:
+        path: "/etc/systemd/system/user-{{ client_uid }}.slice.d"
+        state: directory
+        mode: "0755"
+
+    - name: Apply account resource caps (systemd user-slice drop-in)
+      ansible.builtin.template:
+        src: user-slice.j2
+        dest: "/etc/systemd/system/user-{{ client_uid }}.slice.d/99-octbase.conf"
+        mode: "0644"
+      register: slice_dropin
+
+    - name: Reload systemd to apply the slice caps
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: slice_dropin.changed
+
+    - name: Find the filesystem holding the client home
+      ansible.builtin.command:
+        cmd: df --output=target {{ home_dir }}
+      register: home_mount
+      changed_when: false
+
+    - name: Apply the filesystem user quota (soft 90% / hard 100%)
+      ansible.builtin.command:
+        cmd: >-
+          setquota -u {{ linux_user }}
+          {{ ((client_disk_quota_gb | int) * 1024 * 1024 * 0.9) | int }}
+          {{ (client_disk_quota_gb | int) * 1024 * 1024 }}
+          0 0 {{ home_mount.stdout_lines | last | trim }}
+      register: quota_set
+      changed_when: quota_set.rc == 0
+      failed_when: false
+
+    # Keep the monitor's view of the quota in step (it alerts at
+    # disk_alert_pct% of this value even when the fs cannot enforce it).
+    - name: Update the monitor registry with the new quota
+      ansible.builtin.template:
+        src: client-registry.conf.j2
+        dest: "{{ clients_registry_dir }}/{{ client }}.conf"
+        mode: "0644"
+
+    - name: Read the live slice state
+      ansible.builtin.command:
+        cmd: >-
+          systemctl show user-{{ client_uid }}.slice
+          -p MemoryMax,CPUQuotaPerSecUSec,TasksMax,MemoryCurrent,TasksCurrent
+      register: slice_state
+      changed_when: false
+
+    - name: Result
+      ansible.builtin.debug:
+        msg:
+          - "{{ client }}: memory_max={{ client_resources.memory_max }} cpu_quota={{ client_resources.cpu_quota }} tasks_max={{ client_resources.tasks_max }} disk_quota={{ client_disk_quota_gb }}G"
+          - "Filesystem quota {{ 'enforced' if quota_set.rc == 0 else 'NOT enforced (no usrquota on the filesystem) — monitoring covers it' }}."
+          - "{{ slice_state.stdout_lines }}"
+          - "If you overrode the ledger with -e values, update ledger/clients/{{ client }}.yml now and commit."

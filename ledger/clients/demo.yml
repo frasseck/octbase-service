@@ -17,6 +17,9 @@ status: active
 
 app_version: "1.0.4"
 
+host: prod
+disk_quota_gb: 20
+
 ports:
   frontend: 8110
   api: 8111

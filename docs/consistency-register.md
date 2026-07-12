@@ -25,7 +25,7 @@ date — most recently done 2026-07-11 for v1.0.4 (§2.2, one open finding).
 | C4 | **Version stamping**: a deployed `OCTBASE_APP_VERSION` must correspond to a dated `CHANGELOG.md` release entry | app repo `CHANGELOG.md` (release skill renames `Unreleased`) | `OCTBASE_APP_VERSION` in dev/demo `.env` · `octbase_version` in `inventory/group_vars/all.yml` · `app_version` per ledger entry |
 | C5 | **API surface**: served routes = `api/openapi.yaml` = app `README.md` API reference | chi router | `TestEveryRouteIsDocumented` covers routes→spec **only** — a route removed from code is *not* flagged when it lingers in the spec or README; check those by hand |
 | C6 | **Health contract**: `GET /health` returns 200 on the API port *and* through the frontend Caddy (`@backend` matcher) | app repo (API `main.go`, frontend `Caddyfile`) | `create-instance.yml` / `set-max-users.yml` health waits · `check-health.sh` · `monitor-all.sh` edge probe · external uptime checks |
-| C7 | **Compose project/container naming**: client stacks use `COMPOSE_PROJECT_NAME=octbase` → containers `octbase_<service>_1` | `env.j2` | `remove-instance.yml` (`podman exec octbase_postgres_1`) · `set-max-users.yml` (compose-service label filter) · `monitor-all.sh` (`--project octbase`) |
+| C7 | **Compose project/container naming**: client stacks use `COMPOSE_PROJECT_NAME=octbase` → containers `octbase_<service>_1` | `env.j2` | `remove-instance.yml` (`podman exec octbase_postgres_1`) · `set-max-users.yml` (compose-service label filter) · `monitor-all.sh` (`--project octbase`) · `backup-fleet.sh` + `migrate-host.yml` (`octbase_postgres_1`, api label filter) |
 | C8 | **Host port registry**: no client port may collide with the dev/demo/marketing stacks | live `.env` files of the three resident stacks | `RESERVED_PORTS` in `ledger.py` (allocation starts at 8110 regardless) |
 | C9 | **Isolation claim**: “all service ports bind to 127.0.0.1, only the edge is public” | [security concept §2](security-data-protection-concept.md) | `env.j2` (`127.0.0.1:<port>` — holds for clients) · dev/demo/marketing `.env` port values (**do not** hold, see D6) |
 | C10 | **Reserved client names**: `www dev mail api octbase admin` (`demo` unreserved 2026-07-11 — the public demo became a ledger-managed instance, `clients/demo.yml` + `migrate-instance.yml`) | `ledger.py` `RESERVED_NAMES` | `create-instance.yml` assert · `_example.yml.sample` comment |
@@ -34,6 +34,8 @@ date — most recently done 2026-07-11 for v1.0.4 (§2.2, one open finding).
 | C15 | **Edge proxy targets**: the root-managed edge Caddyfile's `reverse_proxy` targets must match how the stacks bind their frontend ports | `/etc/caddy/Caddyfile` (root) | `FRONTEND_PORT`/`WEB_PORT` values in the three resident `.env` files; currently the edge targets the host's **public IP**, so those three ports must stay on `0.0.0.0` (see §2.1) |
 | C12 | **Public claims = platform facts**: hosting location, data handling, feature/limit statements on `ocete.ch` | privacy policy / terms (legal texts) | marketing copy (features, pricing) · security concept · actual hosting |
 | C13 | **Deploy source**: `octbase_src` must point at the released commit with a **clean tree** — `create-instance.yml` rsyncs the working tree as-is | `inventory/group_vars/all.yml` | state of `~/dev.ocete.ch` at rollout time (a live dev checkout, often on a release branch with uncommitted work) |
+| C16 | **Client registry conf format** (`/etc/octbase/clients.d/<name>.conf`): `NAME`/`USER_ACCT`/`DOMAIN`/`FRONTEND_PORT`/`API_PORT`/`HOME_DIR`/`DISK_QUOTA_GB` (+ optional `EDGE_PROBE`) — sourced as shell variables | `playbooks/templates/client-registry.conf.j2` | `monitor-all.sh` (health, edge, disk) · `backup-fleet.sh` (dump + files) — a key rename must touch all three |
+| C17 | **Instance placement**: a ledger `host:` value must name an entry in `inventory/hosts.yml`; per-client playbooks no-op on every other host, so a wrong value silently deploys nowhere (guarded by an assert + `ledger.py validate`) | `ledger/clients/*.yml` (`host:`) + `default_client_host` in group_vars | `inventory/hosts.yml` host names · the `end_host` guards in every per-client playbook |
 | C13b | **Git deploy source**: `sync-instance.yml` deploys `octbase_branch` (default `main`) of `octbase_repo` instead of the `octbase_src` working tree — same rsync excludes, but a clean branch tip, not local edits. It does **not** re-stamp `OCTBASE_APP_VERSION` (that stays ledger/create-instance-driven, C4), so a branch synced ahead of its stamped version reports a stale version until `create-instance.yml` re-runs | `inventory/group_vars/all.yml` (`octbase_repo`/`octbase_branch`) | `sync-instance.yml` · app repo branch tip · C4 version stamp |
 
 ## 2. Drift found 2026-07-10 — all fixed same day
@@ -249,6 +251,26 @@ Also noted, no defect: `octbase_src` (`~/dev.ocete.ch`) is currently a dirty
 `release_v15` tree — fine between rollouts, but it must be on the released
 commit with a clean tree (C13) before the pending demo migration or any
 client rollout runs.
+
+## 2.3 Fleet update 2026-07-12 (multi-host, resources, quotas, fleet backup)
+
+The `docs/fleet-concept.md` change set (ledger `host:`/`disk_quota_gb`/
+`resources:`, per-client host scoping, `migrate-host.yml`,
+`suspend-instance.yml`, `set-resources.yml`, `install-backup.yml`, disk
+monitoring). New contracts C16/C17 above. Two defects found in review and
+fixed with it:
+
+### D11 — Ledger `monitor_edge_probe` never reached the monitor registry — **fixed**
+`client-registry.conf.j2` tested the bare variable `monitor_edge_probe`, but
+`create-instance.yml` loads the ledger namespaced as `client_ledger` — so the
+README-documented per-client edge-probe opt-out was silently ignored (the
+registry conf never got an `EDGE_PROBE` line from the ledger). The template
+now reads `client_ledger.monitor_edge_probe`.
+
+### D12 — README claimed Ansible ≥ 2.14 works — **fixed**
+The playbooks use `ansible.builtin.systemd_service`, which only exists since
+ansible-core 2.15; on 2.14 every playbook fails to resolve the module. The
+prerequisite now says ansible-core ≥ 2.16.
 
 ## 3. Review checklist (run per release, ~10 minutes)
 

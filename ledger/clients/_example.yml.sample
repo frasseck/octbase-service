@@ -29,6 +29,26 @@ status: active
 # Falls back to `octbase_version` from group_vars when omitted.
 app_version: "1.0.1"
 
+# Inventory host (inventory/hosts.yml) this instance runs on. Every
+# per-client playbook scopes itself to this host. Falls back to
+# `default_client_host` from group_vars when omitted. To move an instance,
+# change this and run migrate-host.yml (see docs/fleet-concept.md).
+host: prod
+
+# Disk quota for the whole client account in GB. Enforced via filesystem
+# user quota where the host supports it (create-instance warns otherwise);
+# always monitored — the fleet monitor alerts at 90% usage.
+disk_quota_gb: 10
+
+# Optional account-level resource caps (systemd user-slice drop-in; covers
+# all containers AND image builds). Omitted keys use the platform defaults
+# (`client_default_resources` in group_vars). Apply without a redeploy via
+# set-resources.yml.
+# resources:
+#   memory_max: 4G      # systemd MemoryMax
+#   cpu_quota: 300%     # systemd CPUQuota (100% = one core)
+#   tasks_max: 1024     # systemd TasksMax
+
 # Unique host ports (127.0.0.1-bound), allocated by `ledger.py next-ports`:
 # a block of three per client — frontend f, api f+1, postgres f+2.
 ports:

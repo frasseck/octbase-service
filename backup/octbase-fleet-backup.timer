@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Octbase fleet backup (04:00, per-client dump + restore test)
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

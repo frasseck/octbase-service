@@ -45,6 +45,17 @@
           Ledger entry for '{{ client | default('?') }}' is missing or not
           'active' — run ./ledger/ledger.py validate.
 
+    - name: Client host must exist in the inventory
+      ansible.builtin.assert:
+        that: (host | default(default_client_host)) in groups['octbase_hosts']
+        fail_msg: >-
+          Ledger host '{{ host | default(default_client_host) }}' is not in
+          inventory/hosts.yml — fix the ledger entry (or the inventory).
+
+    - name: Scope the play to the client's host
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (host | default(default_client_host))
+
     - name: Look up the client account (must already exist)
       ansible.builtin.getent:
         database: passwd

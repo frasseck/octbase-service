@@ -1,0 +1,67 @@
+---
+# Install / update the fleet backup on every production host:
+#
+#   ansible-playbook playbooks/install-backup.yml
+#
+# Deploys backup-fleet.sh + a daily system timer that dumps every registered
+# client's database (with a mandatory restore test into a throwaway
+# Postgres), archives attachments + .env, prunes old files and optionally
+# syncs everything off-host. Configure retention / restore-test image /
+# off-host command in inventory/group_vars/all.yml and re-run.
+- name: Install Octbase fleet backup
+  hosts: octbase_hosts
+  become: true
+
+  tasks:
+    - name: Create directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /usr/local/lib/octbase, mode: "0755" }
+        - { path: /etc/octbase, mode: "0755" }
+        - { path: "{{ clients_registry_dir }}", mode: "0755" }
+        - { path: "{{ fleet_backup_root }}", mode: "0700" }
+
+    - name: Install backup-fleet.sh
+      ansible.builtin.copy:
+        src: ../backup/backup-fleet.sh
+        dest: /usr/local/lib/octbase/backup-fleet.sh
+        mode: "0755"
+
+    - name: Write backup configuration
+      ansible.builtin.copy:
+        dest: /etc/octbase/backup.conf
+        mode: "0600"
+        content: |
+          # Managed by octbase-service / install-backup.yml
+          BACKUP_ROOT={{ fleet_backup_root }}
+          RETENTION_DAYS={{ backup_retention_days }}
+          TEST_IMAGE={{ backup_test_image }}
+          OFFHOST_SYNC_CMD={{ backup_offhost_cmd | quote }}
+
+    - name: Install systemd units
+      ansible.builtin.copy:
+        src: "../backup/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - octbase-fleet-backup.service
+        - octbase-fleet-backup.timer
+      register: units
+
+    - name: Enable and start the timer
+      ansible.builtin.systemd_service:
+        name: octbase-fleet-backup.timer
+        daemon_reload: "{{ units.changed }}"
+        enabled: true
+        state: started
+
+    - name: Usage hints
+      ansible.builtin.debug:
+        msg:
+          - "Backups land in {{ fleet_backup_root }}/<client>/ (log: backup.log there)."
+          - "Manual run:  sudo /usr/local/lib/octbase/backup-fleet.sh"
+          - "History:     journalctl -u octbase-fleet-backup.service"
+          - "{{ 'Off-host sync: ' + backup_offhost_cmd if backup_offhost_cmd else 'Off-host sync NOT configured — set backup_offhost_cmd (readiness plan B1).' }}"

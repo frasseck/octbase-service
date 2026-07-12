@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+# SUSPENDED client "{{ client }}" — stack stopped, domain answers 503.
+# Resume: status: active in the ledger + create-instance.yml (rewrites this).
+{{ fqdn }} {
+	respond "This instance is suspended." 503
+}

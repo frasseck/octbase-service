@@ -5,12 +5,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 Operations toolkit for the **ocete.ch** hosting platform: one Octbase stack
-per client, provisioned by Ansible from a git-versioned client ledger, plus
-fleet monitoring and host backups. The [README](README.md) is the full
-reference (layout, ledger fields, runbooks); `docs/platform-overview.md` maps
-this repo against the other three (`dev.ocete.ch`, `demo.ocete.ch`,
-`ocete.ch`). One concern, one owner — link to the authoritative doc rather
-than copying content between repos (see platform-overview §5).
+per client, pinned to one of possibly several hosts (`host:` in the ledger),
+provisioned by Ansible from a git-versioned client ledger, with per-account
+resource caps + disk quotas, fleet monitoring (health + disk) and nightly
+per-client backups. The [README](README.md) is the full reference (layout,
+ledger fields, runbooks); `docs/fleet-concept.md` is the multi-instance /
+multi-host model; `docs/platform-overview.md` maps this repo against the
+other three (`dev.ocete.ch`, `demo.ocete.ch`, `ocete.ch`). One concern, one
+owner — link to the authoritative doc rather than copying content between
+repos (see platform-overview §5).
 
 **Where this checkout runs:** on the production host itself, but the
 playbooks are designed to run **from a separate admin machine** over SSH
@@ -36,9 +39,13 @@ python3 -c "import yaml,glob; [yaml.safe_load_all(open(f).read()) and print('ok'
 ansible-playbook playbooks/create-instance.yml -e client=<name>   # create OR update (idempotent)
 ansible-playbook playbooks/sync-instance.yml -e client=<name>     # sync code to a branch (default main), rebuild + restart
 ansible-playbook playbooks/remove-instance.yml -e client=<name> -e confirm=<name>
-ansible-playbook playbooks/migrate-instance.yml -e client=<name>   # move an installation (prompts for the source)
+ansible-playbook playbooks/migrate-instance.yml -e client=<name>   # move an installation on ONE host (prompts for the source)
+ansible-playbook playbooks/migrate-host.yml -e client=<name> -e source_host=<old> -e confirm=<name>  # move to ANOTHER host (ledger host: = target)
+ansible-playbook playbooks/suspend-instance.yml -e client=<name> -e confirm=<name>  # ledger status must be 'suspended'
 ansible-playbook playbooks/set-max-users.yml -e client=<name>
-ansible-playbook playbooks/install-monitoring.yml
+ansible-playbook playbooks/set-resources.yml -e client=<name>     # apply memory/CPU/tasks caps + disk quota, no redeploy
+ansible-playbook playbooks/install-monitoring.yml                 # all hosts
+ansible-playbook playbooks/install-backup.yml                     # all hosts (nightly per-client backup)
 ```
 
 There is no CI, test suite, or linter in this repo.

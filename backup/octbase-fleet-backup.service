@@ -1,0 +1,9 @@
+[Unit]
+Description=Octbase fleet backup — per-client DB dump + restore test + files
+Documentation=file:/usr/local/lib/octbase/backup-fleet.sh
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/octbase/backup-fleet.sh
+# Dumps + one restore test per client; give a growing fleet room.
+TimeoutStartSec=3600
