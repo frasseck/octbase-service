@@ -10,19 +10,31 @@
 - name: Set OCTBASE_MAX_USERS
   hosts: octbase_hosts
   become: true
-  vars_files:
-    - ../ledger/clients/{{ client }}.yml
   vars:
-    linux_user: "{{ client_user_prefix }}{{ name }}"
+    linux_user: "{{ client_user_prefix }}{{ client }}"
     app_dir: "/home/{{ linux_user }}/{{ client_app_subdir }}"
 
   pre_tasks:
+    - name: Load client ledger entry
+      ansible.builtin.include_vars:
+        file: "../ledger/clients/{{ client }}.yml"
+        name: client_ledger
+      register: client_ledger_loaded
+
+    - name: Normalize client ledger variable
+      ansible.builtin.set_fact:
+        client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
+
+    - name: Resolve effective max_users
+      ansible.builtin.set_fact:
+        effective_max_users: "{{ (max_users if (max_users is defined) else client_ledger.max_users) | int }}"
+
     - name: Validate
       ansible.builtin.assert:
         that:
           - client is defined
-          - name == client
-          - max_users | int >= 1
+          - client_ledger.name == client
+          - effective_max_users | int >= 1
         fail_msg: "max_users must be a positive integer"
 
     - name: Scope the play to the client's host
@@ -38,14 +50,14 @@
     - name: Set user session env
       ansible.builtin.set_fact:
         user_env:
-          XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[linux_user][1] }}"
-          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[linux_user][1] }}/bus"
+          XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['getent_passwd'][linux_user][1] }}"
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_facts['getent_passwd'][linux_user][1] }}/bus"
 
     - name: Update OCTBASE_MAX_USERS in .env
       ansible.builtin.lineinfile:
         path: "{{ app_dir }}/.env"
         regexp: "^OCTBASE_MAX_USERS="
-        line: "OCTBASE_MAX_USERS={{ max_users }}"
+        line: "OCTBASE_MAX_USERS={{ effective_max_users }}"
       register: envchange
 
     # Don't trust the file edit alone: if a previous run died between the
@@ -76,12 +88,12 @@
       when: >-
         envchange.changed
         or running_max_users.rc != 0
-        or (running_max_users.stdout | trim) != (max_users | string)
+        or (running_max_users.stdout | trim) != (effective_max_users | string)
       register: restart
 
     - name: Wait for API health
       ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ ports.api }}/health"
+        url: "http://127.0.0.1:{{ client_ledger.ports.api }}/health"
         status_code: 200
       register: health
       retries: 30
@@ -91,7 +103,7 @@
     - name: Result
       ansible.builtin.debug:
         msg: >-
-          {{ name }}: OCTBASE_MAX_USERS={{ max_users }}
+          {{ client }}: OCTBASE_MAX_USERS={{ effective_max_users }}
           ({{ 'stack restarted' if restart is not skipped else 'value already live in the container — no restart' }}).
           If you overrode the ledger with -e max_users, update
-          ledger/clients/{{ name }}.yml now and commit.
+          ledger/clients/{{ client }}.yml now and commit.

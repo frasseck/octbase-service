@@ -1,9 +1,8 @@
 ---
 # Sync an EXISTING Octbase client installation to a branch of the app repo
-# (default: main) and redeploy it.
+# (main) and redeploy it.
 #
 #   ansible-playbook playbooks/sync-instance.yml -e client=demo
-#   ansible-playbook playbooks/sync-instance.yml -e client=demo -e octbase_branch=release_v15
 #
 # Unlike create-instance.yml this is UPDATE-ONLY: it does not create the Linux
 # account, generate secrets, or write/rewrite the client's .env — it refuses if
@@ -25,22 +24,30 @@
 - name: Sync Octbase client instance to an app-repo branch
   hosts: octbase_hosts
   become: true
-  vars_files:
-    - ../ledger/clients/{{ client }}.yml
   vars:
-    linux_user: "{{ client_user_prefix }}{{ name }}"
+    linux_user: "{{ client_user_prefix }}{{ client }}"
     home_dir: "/home/{{ linux_user }}"
     app_dir: "{{ home_dir }}/{{ client_app_subdir }}"
-    fqdn: "{{ name }}.{{ base_domain }}"
+    fqdn: "{{ client }}.{{ base_domain }}"
 
   pre_tasks:
+    - name: Load client ledger entry
+      ansible.builtin.include_vars:
+        file: "../ledger/clients/{{ client }}.yml"
+        name: client_ledger
+      register: client_ledger_loaded
+
+    - name: Normalize client ledger variable
+      ansible.builtin.set_fact:
+        client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
+
     - name: Validate ledger entry
       ansible.builtin.assert:
         that:
           - client is defined
-          - name == client
-          - status == 'active'
-          - ports.api is defined
+          - client_ledger.name == client
+          - client_ledger.status == 'active'
+          - client_ledger.ports.api is defined
         fail_msg: >-
           Ledger entry for '{{ client | default('?') }}' is missing or not
           'active' — run ./ledger/ledger.py validate.
@@ -94,14 +101,14 @@
     # deploy key (root SSH to GitHub is neither wanted nor set up), exactly as
     # octbase_src is a working tree on the admin machine. become: false runs it
     # as the connecting admin user rather than sudo.
-    - name: Fetch the requested branch on the admin machine
+    - name: Fetch current main on the admin machine
       delegate_to: localhost
       run_once: true
       become: false
       ansible.builtin.git:
         repo: "{{ octbase_repo }}"
         dest: "{{ octbase_git_cache }}"
-        version: "{{ octbase_branch }}"
+        version: main
         depth: 1
         single_branch: true
         force: true
@@ -140,9 +147,9 @@
       register: override
       notify: Restart stack
 
-    # App code is baked into the images at build time (not bind-mounted), so new
-    # source only takes effect after a rebuild. Skip it entirely when nothing
-    # changed — that is what makes an already-synced re-run a true no-op.
+    # App code is baked into the images at build time (not bind-mounted).
+    # Always rebuild/restart on sync so the instance is guaranteed to run the
+    # freshly fetched main tip even if rsync metadata says "unchanged".
     - name: Rebuild container images from the synced source
       become_user: "{{ linux_user }}"
       environment: "{{ user_env }}"
@@ -151,31 +158,37 @@
         chdir: "{{ app_dir }}"
       changed_when: false
       timeout: 3600
-      when: appsrc.changed or override.changed
 
-    - name: Restart on the new images, then health-check (only if changed)
-      when: appsrc.changed or override.changed
-      block:
-        - name: Flush handlers (apply the pending restart before the health check)
-          ansible.builtin.meta: flush_handlers
+    - name: Restart the stack on rebuilt images
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.systemd_service:
+        name: octbase
+        scope: user
+        daemon_reload: true
+        state: restarted
 
-        - name: Wait for API health
-          ansible.builtin.uri:
-            url: "http://127.0.0.1:{{ ports.api }}/health"
-            status_code: 200
-          register: health
-          retries: 30
-          delay: 5
-          until: health.status == 200
+    - name: Wait for API health
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ client_ledger.ports.api }}/health"
+        status_code: 200
+      register: health
+      retries: 30
+      delay: 5
+      until: health.status == 200
+
+    - name: Prune unused Podman images
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.command:
+        cmd: podman image prune -f
 
     - name: Sync summary
       ansible.builtin.debug:
         msg: >-
-          {{ fqdn }} synced to {{ octbase_repo }}@{{ octbase_branch }}
+          {{ fqdn }} synced to {{ octbase_repo }}@main
           ({{ appclone.after | default('?') | truncate(12, true, '') }}).
-          {{ 'Rebuilt and restarted; API /health 200 on 127.0.0.1:' ~ ports.api ~ '.'
-             if (appsrc.changed or override.changed)
-             else 'Source already up to date — no rebuild or restart.' }}
+          Rebuilt and restarted; API /health 200 on 127.0.0.1:{{ client_ledger.ports.api }}.
 
   handlers:
     - name: Restart stack
