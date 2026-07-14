@@ -15,7 +15,7 @@ max_users: 25
 registered: 2026-07-11
 status: active
 
-app_version: "1.0.4"
+app_version: "1.0.7"
 
 host: prod
 disk_quota_gb: 20
