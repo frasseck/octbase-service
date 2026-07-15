@@ -295,17 +295,22 @@ meant the *tooling*, not the installation — both docs corrected. **Fix:**
 run both install playbooks from the admin machine, then re-run
 `create-instance.yml -e client=demo` (see D19), then fix the legacy job.
 
-### D14 — Unidentified public Octbase API on 0.0.0.0:8000; demo frontend on 0.0.0.0:8110 (C9) — **open (operator, root)**
-An Octbase API answers on `0.0.0.0:8000` with `version: "beta"` (no
-`OCTBASE_APP_VERSION` stamp), `Access-Control-Allow-Origin:
-http://localhost:8080` (dev defaults, i.e. no production override), a
-**publicly served `/metrics`** (the F1 exposure, again) and a live database
-at migration 31. It is not among the `claude` account's containers and its
-owner cannot be identified without root — `ss -ltnp` as root, then stop it
-or bind it to loopback. Separately, the demo frontend binds `0.0.0.0:8110`
-although its edge vhost already targets `127.0.0.1:8110` — set
-`FRONTEND_PORT=127.0.0.1:8110` in `/home/oct-demo/octbase/.env` and restart.
-Until both are fixed, C9's "holds for clients" claim does not hold live.
+### D14 — Public Octbase API on 0.0.0.0:8000; demo frontend on 0.0.0.0:8110 (C9) — **identified 2026-07-15, cleanup open**
+The `0.0.0.0:8000` API (`version: "beta"`, dev-default CORS, public
+`/metrics`, DB at migration 31) was identified via the process table: a
+**natively run e2e test API** — `PORT=8000 go run ./cmd/octbase-api` with
+`OCTBASE_DEMO_MODE=true` against a throwaway `octbase_e2e` database on the
+dev Postgres (5433) — started 2026-07-15 05:46 by a dev-session in
+`~/dev.ocete.ch` (Go binds `:8000` on all interfaces by default). No client
+or demo data behind it, but demo mode + public binding = seeded logins
+reachable from outside if the firewall allows 8000, and it squats on the
+reserved legacy-demo port. **Fix:** stop it when the e2e run is done; make
+the e2e harness bind `127.0.0.1`; the durable guard is readiness plan B4
+(loopback-only posture / external port scan). Separately, the demo frontend
+binds `0.0.0.0:8110` although its edge vhost already targets
+`127.0.0.1:8110` — set `FRONTEND_PORT=127.0.0.1:8110` in
+`/home/oct-demo/octbase/.env` and restart. Until then C9's "holds for
+clients" claim does not hold live.
 
 ### D15 — Marketing port 8120 missing from `RESERVED_PORTS` (C8) — **fixed**
 `scripts/migrate-ocete-web.sh` moved the marketing site to
