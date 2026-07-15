@@ -26,6 +26,6 @@ ports:
   postgres: 8112
 
 notes: >-
-  Platform demo instance. Migration from /home/claude/demo.ocete.ch
-  (legacy ports 8080/8000/5432, which stay reserved) is pending until
-  migrate-instance.yml is run from the admin machine.
+  Platform demo instance. Migrated from /home/claude/demo.ocete.ch into the
+  oct-demo account on 2026-07-11 via migrate-instance.yml (legacy ports
+  8080/8000/5432 stay reserved).

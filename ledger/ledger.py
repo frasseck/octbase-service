@@ -36,8 +36,10 @@ RESERVED_NAMES = {"www", "dev", "mail", "api", "octbase", "admin"}
 EDITIONS = {"team", "business", "enterprise"}
 STATUSES = {"active", "suspended", "removed"}
 # Ports already used by the dev/demo/marketing stacks on the host
-# (8025/8026 are the dev/demo Mailpit UI ports of the dev overlay).
-RESERVED_PORTS = {5432, 5433, 8000, 8001, 8025, 8026, 8080, 8081, 8082, 8083}
+# (8025/8026 are the dev/demo Mailpit UI ports of the dev overlay; 8120 is
+# the oct-web marketing site, scripts/migrate-ocete-web.sh — it sits inside
+# the client allocation range and must never be handed to a client).
+RESERVED_PORTS = {5432, 5433, 8000, 8001, 8025, 8026, 8080, 8081, 8082, 8083, 8120}
 PORT_BASE = 8110   # first client block; blocks advance in steps of 10
 PORT_STEP = 10
 

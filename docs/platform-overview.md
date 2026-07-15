@@ -6,8 +6,9 @@ per-client provisioning toolkit); this document is the map of everything
 around it: which repo owns what, what actually runs on the host, how a change
 travels from development to a client instance, and where the authoritative
 documentation for each concern lives.
-**Last reviewed:** 2026-07-11 (v1.0.4 release check, host state
-re-verified; last full pass 2026-07-10).
+**Last reviewed:** 2026-07-15 (deep review, host state re-verified — §2
+updated for the demo/marketing account migrations; last full pass
+2026-07-10).
 
 Its companion, the [consistency register](consistency-register.md), lists the
 cross-repo contracts that must stay in sync — read it before changing env
@@ -29,32 +30,36 @@ is a deployment target that only ever moves by pulling `main`.
 
 ## 2. What runs on the host
 
-All four stacks run rootless under the `claude` account today; client
-instances (none onboarded yet) will each get their own `oct-<name>` account
-as described in the README. The demo is prepared to become the first
-ledger-managed instance (`ledger/clients/demo.yml`, ports 8110–8112) — the
-move to its own `oct-demo` account via `migrate-instance.yml` is pending,
-so until that runs the table below is still the live state.
+Since 2026-07-11 only the **dev** stack still runs under the `claude`
+account: the public demo was migrated into its own `oct-demo` account as the
+first ledger-managed instance (`ledger/clients/demo.yml`, ports 8110–8112,
+via `migrate-instance.yml`), and the marketing site moved to the `oct-web`
+account on loopback port 8120 (`scripts/migrate-ocete-web.sh`; 8120 is
+reserved in `ledger.py` so it is never allocated to a client).
 
-| Stack | Compose project | systemd unit (user) | Host ports |
-|---|---|---|---|
-| Marketing `ocete.ch` | `ocete` | `octbase-web.service` | web 8082 |
-| Demo `demo.ocete.ch` | `octbase` | `octbase.service` | postgres 5432 · api 8000 · frontend 8080 |
-| Dev `dev.ocete.ch` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
-| DB backup | — | `octbase-backup.timer` (daily 03:30) | — |
-| Client `<name>` (future) | `octbase` (per account) | per-user `octbase.service`, root `octbase-monitor.timer` + `octbase-fleet-backup.timer` | frontend/api/postgres blocks from 8110, loopback-only |
+| Stack | Account | Compose project | systemd unit (user) | Host ports |
+|---|---|---|---|---|
+| Marketing `ocete.ch` | `oct-web` | `ocete` | `ocete-web.service` | web 8120 (loopback) |
+| Demo `demo.ocete.ch` | `oct-demo` | `octbase` | `octbase.service` | frontend 8110 · api 8111 · postgres 8112 |
+| Dev `dev.ocete.ch` | `claude` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
+| DB backup (legacy, dev only) | `claude` | — | `octbase-backup.timer` (daily 03:30) | — |
+| Client `<name>` | `oct-<name>` | `octbase` (per account) | per-user `octbase.service`, root `octbase-monitor.timer` + `octbase-fleet-backup.timer` (**not yet installed** — register D13) | frontend/api/postgres blocks from 8110, loopback-only |
 
-Also on the host: `~/restart.sh` (rebuilds the three stacks; for demo it
-`git pull`s first), `~/credentials/` (the real `.env` files for dev and
-marketing — `~/dev.ocete.ch/.env` and `~/ocete.ch/.env` are symlinks into
-it), `~/backups/` (nightly dumps + `backup.log`).
+Also on the host: `~/restart.sh` (stale since the migrations: it still
+rebuilds `~/ocete.ch` — no longer the public site — and `cd`s into the
+removed `~/demo.ocete.ch`; use `sync-instance.yml` for the demo instead),
+`~/credentials/` (the real `.env` files for dev and marketing —
+`~/dev.ocete.ch/.env` is a symlink into it), `~/backups/` (legacy nightly
+dumps + `backup.log`; covers only what the `claude` account can see, i.e.
+dev — the demo is the fleet backup's job, register D13).
 
 **Port binding:** since 2026-07-10 the resident stacks bind Postgres and API
-ports to `127.0.0.1`; only their frontend ports (8080/8081/8082) remain on
-`0.0.0.0`, because the root-managed edge Caddyfile targets the host's public
-IP instead of `127.0.0.1`. Once the edge is repointed (root change), prefix
-the three `FRONTEND_PORT`/`WEB_PORT` values too. Client instances are always
-fully loopback-bound via `env.j2`. See consistency register C9.
+ports to `127.0.0.1`; the dev frontend (8081) remains on `0.0.0.0` because
+the root-managed edge Caddyfile targets the host's public IP instead of
+`127.0.0.1` (readiness plan B4). The demo frontend currently also binds
+`0.0.0.0:8110` although its edge vhost targets loopback — flip its
+`FRONTEND_PORT` to `127.0.0.1:8110` and restart (register D14). Client
+instances are fully loopback-bound via `env.j2`. See consistency register C9.
 
 The public edge reverse proxy (root-managed Caddy, outside all four repos)
 terminates TLS for `ocete.ch`, `demo.ocete.ch`, `dev.ocete.ch` and, later,

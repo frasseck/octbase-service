@@ -26,7 +26,7 @@ octbase_git_cache: "{{ lookup('env', 'HOME') }}/.cache/octbase-service/octbase"
 
 # Default OCTBASE_APP_VERSION stamp when a ledger entry has no app_version.
 # Keep in step with the latest release entry in the app repo's CHANGELOG.md.
-octbase_version: "1.0.4"
+octbase_version: "1.0.7"
 
 # SMTP relay for outgoing app mail (invitations, notifications). Leaving the
 # host empty makes the API log mail to stdout — set a real relay before

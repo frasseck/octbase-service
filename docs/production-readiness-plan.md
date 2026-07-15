@@ -31,12 +31,17 @@ database only; attachments are captured solely in the offboarding snapshot.
 A disk failure or ransomware event loses data *and* backup together.
 
 Plan:
-1. **Attachments into the nightly rotation** — ✅ done 2026-07-12: the
+1. **Attachments into the nightly rotation** — tooling done 2026-07-12,
+   **installation still pending** (found 2026-07-15, register D13): the
    root-level fleet backup (`backup/backup-fleet.sh` via
    `install-backup.yml`) dumps every registered client's DB (with the
    mandatory restore test) *and* archives attachments + `.env`, per client,
-   nightly. Root-level rather than per-tenant units because rootless podman
-   is per-user — one account cannot see the others' containers.
+   nightly — but `install-backup.yml` has **never been run against the
+   host**: no timer exists, and the migrated demo has had no backup since
+   2026-07-11 (the legacy `claude`-account job cannot see `oct-demo`).
+   Run `install-backup.yml` before anything else in this plan. Root-level
+   rather than per-tenant units because rootless podman is per-user — one
+   account cannot see the others' containers.
 2. **Off-host, versioned copy — still open.** Set `backup_offhost_cmd`
    (group_vars → `install-backup.yml`) to sync the backup roots after each
    run to object storage in Germany — encrypted client-side (e.g. `rclone`
@@ -57,8 +62,11 @@ when the sync fails.
 
 ### B2 — Alerting actually reaches a human  *(~½ day)*
 
-The fleet monitor is designed but not live: `/etc/octbase` doesn't exist,
-`alert_email` is empty, and nothing external watches the sites.
+The fleet monitor is designed but not live: `install-monitoring.yml` has
+never been run (no timer, `/usr/local/lib/octbase/` missing — register
+D13), `alert_email` is empty, and nothing external watches the sites. The
+cost of this is already visible: the legacy backup has been failing since
+2026-07-14 with nobody alerted.
 
 1. Set `alert_email` in `inventory/group_vars/all.yml`; verify the host can
    send mail (`sendmail` path — the marketing SMTP relay can serve as

@@ -13,7 +13,8 @@ operations layer, Caddy configs, all app docs, the mailer and locale parity).
 **All drift found was fixed the same day** — §2 and §2.0 keep the findings
 with their resolutions; the few genuinely open remainders are in §2.1.
 Re-run the checks in §3 after any release, and record findings here with a
-date — most recently done 2026-07-11 for v1.0.4 (§2.2, one open finding).
+date — most recently done 2026-07-15 as a full deep review of this repo plus
+the live host (§2.4; the v1.0.5–v1.0.7 releases had skipped this checklist).
 
 ## 1. The contracts
 
@@ -271,6 +272,104 @@ now reads `client_ledger.monitor_edge_probe`.
 The playbooks use `ansible.builtin.systemd_service`, which only exists since
 ansible-core 2.15; on 2.14 every playbook fails to resolve the module. The
 prerequisite now says ansible-core ≥ 2.16.
+
+## 2.4 Deep review 2026-07-15 (this repo + live host, read-only)
+
+Full review of every file in this repo plus read-only host inspection.
+Repo-side defects were fixed in the same change set; host-side items need
+the operator and are marked **open**. Context: the v1.0.5–v1.0.7 releases
+skipped the §3 checklist entirely, which is how D15–D18 accumulated.
+
+### D13 — Fleet monitoring & backup never installed on the host — **open (operator)**
+`install-monitoring.yml` / `install-backup.yml` have never been run against
+`prod`: no `octbase-monitor`/`octbase-fleet-backup` system units or timers,
+`/usr/local/lib/octbase/` missing, no `status.json`. Consequence: the demo —
+migrated to `oct-demo` on 2026-07-11 — has had **no database backup since
+the migration** (the legacy `claude`-account job cannot see `oct-demo`'s
+containers; its last demo dump is from 2026-07-11 03:33, pre-migration
+data). Additionally the legacy backup itself has failed since 2026-07-14
+("restore-test instance did not become ready"), unnoticed because
+`alert_email` is empty and no monitor runs (readiness plan B2). The
+fleet-concept "implemented 2026-07-12" and readiness-plan B1 "done" wording
+meant the *tooling*, not the installation — both docs corrected. **Fix:**
+run both install playbooks from the admin machine, then re-run
+`create-instance.yml -e client=demo` (see D19), then fix the legacy job.
+
+### D14 — Unidentified public Octbase API on 0.0.0.0:8000; demo frontend on 0.0.0.0:8110 (C9) — **open (operator, root)**
+An Octbase API answers on `0.0.0.0:8000` with `version: "beta"` (no
+`OCTBASE_APP_VERSION` stamp), `Access-Control-Allow-Origin:
+http://localhost:8080` (dev defaults, i.e. no production override), a
+**publicly served `/metrics`** (the F1 exposure, again) and a live database
+at migration 31. It is not among the `claude` account's containers and its
+owner cannot be identified without root — `ss -ltnp` as root, then stop it
+or bind it to loopback. Separately, the demo frontend binds `0.0.0.0:8110`
+although its edge vhost already targets `127.0.0.1:8110` — set
+`FRONTEND_PORT=127.0.0.1:8110` in `/home/oct-demo/octbase/.env` and restart.
+Until both are fixed, C9's "holds for clients" claim does not hold live.
+
+### D15 — Marketing port 8120 missing from `RESERVED_PORTS` (C8) — **fixed**
+`scripts/migrate-ocete-web.sh` moved the marketing site to
+`127.0.0.1:8120`, inside the client allocation range (blocks of 10 from
+8110; demo holds 8110–8112) — `ledger.py next-ports` would have handed
+8120–8122 to the **next client**, whose frontend could then never bind.
+8120 added to `RESERVED_PORTS`.
+
+### D16 — Wrong host-scoping variable in three playbooks (C17) — **fixed**
+`remove-instance.yml`, `sync-instance.yml` and `set-max-users.yml` scoped
+with the undefined variable `host` instead of `client_ledger.host`, so they
+always targeted `default_client_host`. Harmless with one inventory host;
+on a multi-host fleet `remove-instance.yml` would have deregistered
+monitoring/edge on the **wrong host**, silently skipped the account
+teardown (its `getent` guard is non-failing) and reported the client
+removed while the stack kept running. All three now use
+`client_ledger.host | default(default_client_host)` like their siblings.
+
+### D17 — `sync-instance.yml` hardcoded `main`; "no-op" claim false (C13b) — **fixed**
+The git task pinned `version: main`, so the documented
+`-e octbase_branch=…` override was silently ignored (now
+`version: "{{ octbase_branch }}"`). Also, README and the playbook header
+claimed a re-run at the branch tip is a no-op — the playbook deliberately
+**always** rebuilds and restarts (code is baked into the images); both
+texts now state that every sync run causes a brief restart.
+
+### D18 — `octbase_version` stale at 1.0.4 (C4) — **fixed**
+The app CHANGELOG's latest release is v1.0.7 (2026-07-14) and the demo
+stamps 1.0.7, but group_vars still said 1.0.4 — a new client would have
+been deployed from a 1.0.7+ tree yet report 1.0.4. Bumped to `1.0.7`.
+Also noted: `octbase_src` (`~/dev.ocete.ch`) is currently a **dirty
+`frontend-build-step` tree** — it must be on the released commit with a
+clean tree (C13) before any client rollout.
+
+### D19 — Demo's registry conf predates the fleet update (C16) — **open (one playbook run)**
+`/etc/octbase/clients.d/demo.conf` (written 2026-07-11) lacks `HOME_DIR`
+and `DISK_QUOTA_GB`, so `monitor-all.sh` would skip disk monitoring for the
+demo once monitoring is installed. Re-run
+`create-instance.yml -e client=demo` (or `set-resources.yml`) to refresh.
+
+### D20 — `env.j2` ↔ app compose `BIND_ADDR` coupling across v1.0.7 (C1/C9) — **recorded**
+Since app v1.0.7 the compose prefixes the postgres/API mappings with
+`${BIND_ADDR:-127.0.0.1}`, and `env.j2` writes **port-only** values for
+those two. The coupling cuts both ways: deploying a **pre-1.0.7 tree** with
+the new `.env` binds Postgres/API on `0.0.0.0`; syncing a client whose
+`.env` still has the old `127.0.0.1:<port>` values (the ports block is
+created once and never rewritten) to a **≥1.0.7 tree** produces an invalid
+mapping and the stack won't start. The demo's `.env` was hand-fixed; check
+every client's `.env` port lines before crossing the 1.0.7 boundary in
+either direction.
+
+### D21 — Minor, noted without fix
+- `migrate-instance.yml`'s vhost-retire regex (`\{[^}]*\}`) cannot match a
+  Caddy vhost containing nested blocks (`header { … }` etc.); the leftover
+  duplicate vhost then fails `caddy validate` **after** the data restore,
+  stranding the migration at cutover. Worked for the demo's flat vhost;
+  revisit before the next adoption/rename.
+- `set-max-users.yml` filters on the `com.docker.compose.service` label
+  where everything else uses `io.podman.compose.service` (C7); a miss only
+  causes an unnecessary restart, not a wrong result.
+- Both backup scripts start the restore-test Postgres **before** taking any
+  dump, so an image-pull/startup failure aborts the night with zero dumps —
+  exactly the live failure mode since 2026-07-14 (D13). Consider dumping
+  first and restore-testing after.
 
 ## 3. Review checklist (run per release, ~10 minutes)
 

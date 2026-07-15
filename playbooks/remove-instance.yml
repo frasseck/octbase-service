@@ -41,7 +41,7 @@
 
     - name: Scope the play to the client's host
       ansible.builtin.meta: end_host
-      when: inventory_hostname != (host | default(default_client_host))
+      when: inventory_hostname != (client_ledger.host | default(default_client_host))
 
   tasks:
     # First, so a monitor run during the teardown window doesn't fire a
