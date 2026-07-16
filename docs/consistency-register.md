@@ -376,6 +376,45 @@ either direction.
   exactly the live failure mode since 2026-07-14 (D13). Consider dumping
   first and restore-testing after.
 
+## 2.5 v19 merged to main 2026-07-16 (frontend bind contract)
+
+### D22 — Frontend mapping gained `FRONTEND_BIND_ADDR` (C1/C9) — **env.j2 fixed; live `.env` files open**
+`release_v19` (merged to `main` as `0b1158a`, 2026-07-16) changed the
+frontend mapping from `"${FRONTEND_PORT:-8080}:8080"` to
+`"${FRONTEND_BIND_ADDR:-0.0.0.0}:${FRONTEND_PORT:-8080}:8080"` — the same
+class of coupling as D20, now on the third port. `env.j2` wrote
+`FRONTEND_PORT=127.0.0.1:<port>`, which expands to a four-segment mapping
+(`0.0.0.0:127.0.0.1:8130:8080`); podman rejects it with *invalid port
+format* and the frontend container never starts. Found live: `beyags`
+create-instance failed at "Enable and start the stack" (podman-compose exit
+125) while postgres/API/mobile — whose mappings didn't change — came up.
+**Fixed here:** `env.j2` now writes `FRONTEND_BIND_ADDR=127.0.0.1` plus a
+port-only `FRONTEND_PORT`. The explicit bind address is load-bearing, not
+cosmetic: v19's default is `0.0.0.0` because a standalone stack is its own
+public entry, so omitting it publishes every client frontend on all
+interfaces and silently breaks C9.
+
+**Open — the ports block is written once and never re-synced, so existing
+`.env` files do not get this fix:**
+- `beyags` — `.env` already created with the old shape; its stack cannot
+  start until the two keys are corrected by hand (or the account is removed
+  and re-created; no data yet).
+- `demo` — still on 1.0.7 code with a 1.0.7-shaped `.env`. It breaks the
+  moment it is deployed a v18+ tree. Fixing it also closes D14's
+  `0.0.0.0:8110` frontend binding: `FRONTEND_BIND_ADDR=127.0.0.1` +
+  `FRONTEND_PORT=8110`.
+- `educaswiss` — never provisioned; gets the new template, no action.
+
+### D23 — v19 merged to main without a changelog release (C4) — **open**
+`main` carries v19 (including the `/m/metrics` exposure fix) but its
+CHANGELOG top section is still `## Unreleased`; the newest dated entry is
+`v1.0.7 — 2026-07-14`. `octbase_version` therefore stays at 1.0.7 and no
+longer describes what `main` deploys — a client provisioned from main is
+stamped `OCTBASE_APP_VERSION=1.0.7` while running post-1.0.7 code. Same
+pattern as D3 and D10. **Fix:** cut the release in the app repo (the
+`release` skill renames `Unreleased` to a dated entry), then bump
+`octbase_version` here and re-run `create-instance.yml` per client.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash
