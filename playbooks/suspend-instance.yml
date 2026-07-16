@@ -5,13 +5,27 @@
 #
 # Workflow (the ledger stays the source of truth):
 #   1. set `status: suspended` in ledger/clients/<name>.yml, commit
-#   2. ansible-playbook playbooks/suspend-instance.yml -e client=acme -e confirm=acme
+#   2. ansible-playbook playbooks/suspend-instance.yml -e client=acme
+#      -> prompts: type the client name to confirm
+#
+# Pass -e confirm=acme to skip the prompt (scripted runs). Ansible also skips
+# it in a non-interactive session, where the assert below then fails closed.
 #
 # Resume: set `status: active`, commit, run create-instance.yml — it restarts
 # the stack, re-registers monitoring and rewrites the real edge vhost.
 - name: Suspend Octbase client instance
   hosts: octbase_hosts
   become: true
+
+  # Skipped when -e confirm=<name> is given, and in any non-interactive
+  # session; the assert in pre_tasks stays the actual enforcement.
+  vars_prompt:
+    - name: confirm
+      prompt: |-
+        Stops the stack and serves 503 for this client's domain (data is kept).
+        Type the client name to confirm
+      private: false
+
   vars:
     linux_user: "{{ client_user_prefix }}{{ client }}"
     fqdn: "{{ client }}.{{ base_domain }}"
@@ -35,7 +49,9 @@
           - client_ledger.status == 'suspended'
         fail_msg: >-
           Refusing: set status: suspended in ledger/clients/{{ client | default('<name>') }}.yml
-          (commit it) and pass -e confirm={{ client | default('<name>') }}.
+          (commit it) and confirm with exactly the client name
+          ({{ client | default('<name>') }}) at the prompt or via
+          -e confirm={{ client | default('<name>') }}.
 
     - name: Scope the play to the client's host
       ansible.builtin.meta: end_host
