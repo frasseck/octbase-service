@@ -185,7 +185,8 @@ ansible-playbook playbooks/sync-instance.yml -e client=demo -e octbase_branch=re
 
 It clones/updates `octbase_branch` (default `main`, from `octbase_repo`) into
 a cache on the **admin machine**, rsyncs that tree into `~/octbase` (same
-excludes as create — `.git`, `.env`, `pgdata*`, `attachments`, `node_modules`),
+excludes as create — `.git`, `.env`, `pgdata*`, `attachments`, `node_modules`,
+`prompts`),
 refreshes the compose override, then **always** rebuilds the images, restarts
 the stack and gates on `/health` — app code is baked into the images at build
 time, so every sync run causes a brief restart, even when the tree is already

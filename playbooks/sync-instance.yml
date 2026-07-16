@@ -130,6 +130,8 @@
           - "--exclude=attachments"
           - "--exclude=.pytest_cache"
           - "--exclude=node_modules"
+          # Internal development prompts — not part of the product.
+          - "--exclude=/prompts"
           - "--chown={{ linux_user }}:{{ linux_user }}"
       register: appsrc
       notify: Restart stack
