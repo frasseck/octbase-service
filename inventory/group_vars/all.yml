@@ -13,7 +13,7 @@ default_client_host: prod
 # (frasseck/octbase.git) at the release you want to deploy. The create
 # playbook rsyncs this working tree AS-IS to the client account — make sure
 # it is on the released commit with a clean `git status` before rolling out.
-octbase_src: "{{ lookup('env', 'HOME') }}/dev.ocete.ch"
+octbase_src: "{{ lookup('env', 'HOME') }}/Apps/octbase"
 
 # The app repo, and the git-based deploy source used by sync-instance.yml
 # (as opposed to create-instance.yml's octbase_src working-tree rsync).
