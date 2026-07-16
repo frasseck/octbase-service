@@ -2,5 +2,6 @@
 # Edge vhost for client "{{ client }}" ({{ client_ledger.display_name | default(client) }}).
 # Include from the edge Caddyfile:  import {{ edge_snippet_dir }}/*.caddy
 {{ fqdn }} {
+	encode gzip
 	reverse_proxy 127.0.0.1:{{ client_ledger.ports.frontend }}
 }
