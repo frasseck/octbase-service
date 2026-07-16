@@ -228,6 +228,28 @@
         - { key: OCTBASE_APP_VERSION, value: "{{ client_ledger.app_version | default(octbase_version) }}" }
       notify: Restart stack
 
+    # The port block was historically written once by env.j2 and never
+    # re-synced, so an app-repo change to a port MAPPING could not reach an
+    # existing client: the stack then failed to start with an invalid port
+    # format and the .env had to be hand-fixed (D20 on postgres/API across
+    # v1.0.7, D22 on the frontend across v18 — same bug, three ports). These
+    # four keys carry no secrets and are pure ledger/platform facts, so they
+    # are re-applied like the blocks above. FRONTEND_BIND_ADDR is not
+    # cosmetic: the compose default is 0.0.0.0 (right for a standalone stack,
+    # which is its own public entry), and a client frontend must stay on
+    # loopback behind the edge proxy — that is C9.
+    - name: Sync port bindings into .env
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/.env"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop:
+        - { key: FRONTEND_BIND_ADDR, value: "127.0.0.1" }
+        - { key: FRONTEND_PORT, value: "{{ client_ledger.ports.frontend }}" }
+        - { key: API_PORT, value: "{{ client_ledger.ports.api }}" }
+        - { key: POSTGRES_PORT, value: "{{ client_ledger.ports.postgres }}" }
+      notify: Restart stack
+
     # Platform-wide values from group_vars would otherwise only ever reach a
     # client on its FIRST deploy (the .env template is never overwritten) —
     # changing e.g. the SMTP relay must propagate to existing clients too.

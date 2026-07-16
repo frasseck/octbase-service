@@ -351,16 +351,16 @@ and `DISK_QUOTA_GB`, so `monitor-all.sh` would skip disk monitoring for the
 demo once monitoring is installed. Re-run
 `create-instance.yml -e client=demo` (or `set-resources.yml`) to refresh.
 
-### D20 — `env.j2` ↔ app compose `BIND_ADDR` coupling across v1.0.7 (C1/C9) — **recorded**
+### D20 — `env.j2` ↔ app compose `BIND_ADDR` coupling across v1.0.7 (C1/C9) — **fixed 2026-07-16 (see D22)**
 Since app v1.0.7 the compose prefixes the postgres/API mappings with
 `${BIND_ADDR:-127.0.0.1}`, and `env.j2` writes **port-only** values for
 those two. The coupling cuts both ways: deploying a **pre-1.0.7 tree** with
 the new `.env` binds Postgres/API on `0.0.0.0`; syncing a client whose
 `.env` still has the old `127.0.0.1:<port>` values (the ports block is
 created once and never rewritten) to a **≥1.0.7 tree** produces an invalid
-mapping and the stack won't start. The demo's `.env` was hand-fixed; check
-every client's `.env` port lines before crossing the 1.0.7 boundary in
-either direction.
+mapping and the stack won't start. The demo's `.env` was hand-fixed at the
+time. Closed by the port re-sync in `create-instance.yml` (D22) — the port
+lines are now re-applied from the ledger on every run, in either direction.
 
 ### D21 — Minor, noted without fix
 - `migrate-instance.yml`'s vhost-retire regex (`\{[^}]*\}`) cannot match a
@@ -378,11 +378,15 @@ either direction.
 
 ## 2.5 v19 merged to main 2026-07-16 (frontend bind contract)
 
-### D22 — Frontend mapping gained `FRONTEND_BIND_ADDR` (C1/C9) — **env.j2 fixed; live `.env` files open**
-`release_v19` (merged to `main` as `0b1158a`, 2026-07-16) changed the
-frontend mapping from `"${FRONTEND_PORT:-8080}:8080"` to
-`"${FRONTEND_BIND_ADDR:-0.0.0.0}:${FRONTEND_PORT:-8080}:8080"` — the same
-class of coupling as D20, now on the third port. `env.j2` wrote
+### D22 — Frontend mapping gained `FRONTEND_BIND_ADDR` (C1/C9) — **fixed**
+**`release_v18`** (commit `b2c39db`, "security: recover per-client IPs for
+rate limiting") changed the frontend mapping from `"${FRONTEND_PORT:-8080}:8080"`
+to `"${FRONTEND_BIND_ADDR:-0.0.0.0}:${FRONTEND_PORT:-8080}:8080"` — the same
+class of coupling as D20, now on the third port. Found while reviewing the
+v19 merge, and first recorded here as a v19 change; it is not
+(`git diff release_v18..release_v19 -- podman-compose.yml` is empty — v19
+touched only the Caddyfiles, CSS and docs). Corrected 2026-07-16: the
+boundary a client `.env` must cross is **v18**, not v19. `env.j2` wrote
 `FRONTEND_PORT=127.0.0.1:<port>`, which expands to a four-segment mapping
 (`0.0.0.0:127.0.0.1:8130:8080`); podman rejects it with *invalid port
 format* and the frontend container never starts. Found live: `beyags`
@@ -390,20 +394,28 @@ create-instance failed at "Enable and start the stack" (podman-compose exit
 125) while postgres/API/mobile — whose mappings didn't change — came up.
 **Fixed here:** `env.j2` now writes `FRONTEND_BIND_ADDR=127.0.0.1` plus a
 port-only `FRONTEND_PORT`. The explicit bind address is load-bearing, not
-cosmetic: v19's default is `0.0.0.0` because a standalone stack is its own
-public entry, so omitting it publishes every client frontend on all
+cosmetic: the compose default is `0.0.0.0` because a standalone stack is its
+own public entry, so omitting it publishes every client frontend on all
 interfaces and silently breaks C9.
 
-**Open — the ports block is written once and never re-synced, so existing
-`.env` files do not get this fix:**
-- `beyags` — `.env` already created with the old shape; its stack cannot
-  start until the two keys are corrected by hand (or the account is removed
-  and re-created; no data yet).
-- `demo` — still on 1.0.7 code with a 1.0.7-shaped `.env`. It breaks the
-  moment it is deployed a v18+ tree. Fixing it also closes D14's
-  `0.0.0.0:8110` frontend binding: `FRONTEND_BIND_ADDR=127.0.0.1` +
-  `FRONTEND_PORT=8110`.
+**Root cause closed 2026-07-16 (fixes D20 too):** `env.j2` alone could not
+repair an existing client — the template is `force: false`, so the port block
+only ever reached a *first* deploy. `create-instance.yml` now re-syncs
+`FRONTEND_BIND_ADDR`, `FRONTEND_PORT`, `API_PORT` and `POSTGRES_PORT` into
+`.env` by `lineinfile` on every run, the same way the ledger- and
+platform-managed keys are applied. An old-shaped value is rewritten in place
+whatever shape it had, which is what makes both D20 and D22 self-healing
+rather than a hand-edit per client. Per-client state:
+- `beyags` — stack down since the failed create. `create-instance.yml -e
+  client=beyags` now repairs the `.env` and starts it; no hand-edit.
+- `demo` — 1.0.7-shaped `.env`, still on 1.0.7 code. Run `create-instance.yml`
+  **before** any sync to a v18+ tree: `sync-instance.yml` does not touch
+  `.env` and would still hit the invalid mapping. Doing so also closes D14's
+  `0.0.0.0:8110` frontend binding.
 - `educaswiss` — never provisioned; gets the new template, no action.
+
+**Not yet verified against a live run** — Ansible cannot execute from the
+production checkout; the task is syntax-checked only.
 
 ### D23 — v19 merged to main without a changelog release (C4) — **open**
 `main` carries v19 (including the `/m/metrics` exposure fix) but its
