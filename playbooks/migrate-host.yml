@@ -12,7 +12,11 @@
 #      provisions the target from it — it must be at or above the source's
 #      schema version, contract C13);
 #   3. ansible-playbook playbooks/migrate-host.yml \
-#        -e client=<name> -e source_host=<old inventory host> -e confirm=<name>
+#        -e client=<name> -e source_host=<old inventory host>
+#      -> phase 1 prompts: type the client name to confirm
+#
+# Pass -e confirm=<name> to skip the prompt (scripted runs). Ansible also
+# skips it in a non-interactive session, where the assert then fails closed.
 #
 # What moves: the database (pg_dump → restore), attachments, and the crypto
 # secrets that data at rest depends on (JWT/SCM/MFA keys — same set as
@@ -30,6 +34,17 @@
 - name: Move instance to another host — phase 1 of 3, dump & stop the source
   hosts: octbase_hosts
   become: true
+
+  # Phase 1 only: vars_prompt is play-scoped, and confirm is asserted here
+  # (same shape as migrate-instance.yml). Skipped when -e confirm=<name> is
+  # given, and in any non-interactive session.
+  vars_prompt:
+    - name: confirm
+      prompt: |-
+        Phase 1 FREEZES and STOPS this client's stack on the source host — downtime starts here.
+        Type the client name to confirm
+      private: false
+
   vars:
     linux_user: "{{ client_user_prefix }}{{ client }}"
     home_dir: "/home/{{ linux_user }}"
@@ -60,7 +75,8 @@
           - (client_ledger.host | default(default_client_host)) in groups['octbase_hosts']
           - (client_ledger.host | default(default_client_host)) != source_host
         fail_msg: >-
-          Pass -e client=<name> -e source_host=<old host> -e confirm=<name>;
+          Pass -e client=<name> -e source_host=<old host> and confirm with
+          exactly the client name (at the prompt, or -e confirm=<name>);
           the ledger's `host:` must already name the NEW host (edit + commit
           first) and differ from source_host — both must exist in
           inventory/hosts.yml.

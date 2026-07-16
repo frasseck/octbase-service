@@ -1,7 +1,11 @@
 ---
 # Offboard a client instance — DESTRUCTIVE. Requires an explicit confirmation:
 #
-#   ansible-playbook playbooks/remove-instance.yml -e client=acme -e confirm=acme
+#   ansible-playbook playbooks/remove-instance.yml -e client=acme
+#     -> prompts: type the client name to confirm
+#
+# Pass -e confirm=acme to skip the prompt (scripted runs). Ansible also skips
+# it in a non-interactive session, where the assert below then fails closed.
 #
 # Takes a final backup (pg_dump + attachments + .env) to {{ backup_dir }},
 # then deletes the Linux account with all its data and deregisters the client
@@ -13,6 +17,16 @@
 - name: Remove Octbase client instance
   hosts: octbase_hosts
   become: true
+
+  # Skipped when -e confirm=<name> is given, and in any non-interactive
+  # session; the assert in pre_tasks stays the actual enforcement.
+  vars_prompt:
+    - name: confirm
+      prompt: |-
+        DESTRUCTIVE: deletes the Linux account, the stack and ALL data for this client.
+        Type the client name to confirm
+      private: false
+
   vars:
     linux_user: "{{ client_user_prefix }}{{ client }}"
     home_dir: "/home/{{ linux_user }}"
@@ -37,7 +51,10 @@
           - client is defined
           - confirm is defined
           - confirm == client
-        fail_msg: "Refusing: pass -e confirm={{ client | default('<name>') }} to really remove this client."
+        fail_msg: >-
+          Refusing: confirm with exactly the client name
+          ({{ client | default('<name>') }}) at the prompt, or pass
+          -e confirm={{ client | default('<name>') }} to really remove it.
 
     - name: Scope the play to the client's host
       ansible.builtin.meta: end_host
