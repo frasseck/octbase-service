@@ -68,7 +68,7 @@ D13), `alert_email` is empty, and nothing external watches the sites. The
 cost of this is already visible: the legacy backup has been failing since
 2026-07-14 with nobody alerted.
 
-1. Set `alert_email` in `inventory/group_vars/all.yml`; verify the host can
+1. Set `alert_email` in `inventory/group_vars/all/main.yml`; verify the host can
    send mail (`sendmail` path — the marketing SMTP relay can serve as
    smarthost).
 2. `ansible-playbook playbooks/install-monitoring.yml`.
@@ -132,10 +132,15 @@ playbooks, set the ledger `host:`, run `playbooks/migrate-host.yml`
 the actual node, its edge Caddy and the first real cross-host move.
 
 ### S2 — Secrets hygiene  *(½ day)*
-`smtp_pass` into Ansible Vault (the group_vars comment already demands it);
-rotate the marketing SMTP password (register §2.1 item 3); document where
-vault keys and off-host-backup encryption keys are kept — a backup nobody
-can decrypt after a laptop loss is not a backup.
+The vault plumbing is in place since 2026-07-17: `group_vars/all/` is now a
+directory, `smtp_pass` reads `vault_smtp_pass` from
+`inventory/group_vars/all/vault.yml` (see `vault.yml.sample` and the README's
+"Secrets & the SMTP vault"). What remains: **create the actual encrypted
+vault.yml** from the admin machine with the rotated password — rotating the
+marketing SMTP password (register §2.1 item 3) and populating the vault are
+the same step — and document where vault keys and off-host-backup encryption
+keys are kept — a backup nobody can decrypt after a laptop loss is not a
+backup.
 
 ### S3 — Deploy from the registry, not per-client builds  *(1 day)*
 CI already publishes per-commit images to GHCR (register F6). Teach

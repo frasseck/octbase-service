@@ -1,0 +1,26 @@
+# Ansible Vault template for the platform's SMTP relay password — the only
+# secret this repo carries (per-client secrets are generated at first deploy
+# and live only in the client's .env on the server).
+#
+# Do NOT copy this file into place in plain text. Create the real vault.yml
+# encrypted, from the admin machine:
+#
+#     ansible-vault create inventory/group_vars/all/vault.yml
+#
+# then paste the line below with the real password. To change it later:
+#
+#     ansible-vault edit inventory/group_vars/all/vault.yml
+#     ansible-vault view inventory/group_vars/all/vault.yml   # read-only check
+#
+# vault.yml IS committed — it is ciphertext. The vault password itself is not
+# in this repo; see README "Secrets & the SMTP vault" for where it is kept.
+#
+# Every playbook run then needs the vault password:
+#
+#     ansible-playbook playbooks/create-instance.yml -e client=acme --ask-vault-pass
+#
+# or, to avoid the prompt, point Ansible at a password file kept outside the
+# repo (mode 0600): export ANSIBLE_VAULT_PASSWORD_FILE=~/.octbase-vault-pass
+
+# Consumed by smtp_pass in main.yml. Empty/absent = unauthenticated relay.
+vault_smtp_pass: "change-me"

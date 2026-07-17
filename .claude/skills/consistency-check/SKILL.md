@@ -34,7 +34,7 @@ grep -oE 'OCTBASE_[A-Z_]+' playbooks/files/podman-compose.client.yml | sort -u \
 # C4 — every stamped version has a dated changelog entry
 grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev ~/demo.ocete.ch/.env
 grep -m1 '^## v' $OCTBASE_SRC/CHANGELOG.md
-grep '^octbase_version' inventory/group_vars/all.yml
+grep '^octbase_version' inventory/group_vars/all/main.yml
 grep -h 'app_version' ledger/clients/*.yml 2>/dev/null
 
 # C8 — live host ports vs ledger.py RESERVED_PORTS

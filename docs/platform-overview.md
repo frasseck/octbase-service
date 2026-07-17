@@ -110,7 +110,7 @@ instances always run base + client override.
    (that is what `~/restart.sh` does), bump `OCTBASE_APP_VERSION` in
    `demo.ocete.ch/.env`.
 4. **Roll out to clients** (this repo): bump `octbase_version` in
-   `inventory/group_vars/all.yml` (and/or `app_version` per ledger entry),
+   `inventory/group_vars/all/main.yml` (and/or `app_version` per ledger entry),
    make sure the `octbase_src` checkout is **on the released commit with a
    clean working tree** — the playbook rsyncs the tree as-is, uncommitted
    changes included — then run `create-instance.yml` per active client.

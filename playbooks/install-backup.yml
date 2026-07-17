@@ -7,7 +7,7 @@
 # client's database (with a mandatory restore test into a throwaway
 # Postgres), archives attachments + .env, prunes old files and optionally
 # syncs everything off-host. Configure retention / restore-test image /
-# off-host command in inventory/group_vars/all.yml and re-run.
+# off-host command in inventory/group_vars/all/main.yml and re-run.
 - name: Install Octbase fleet backup
   hosts: octbase_hosts
   become: true

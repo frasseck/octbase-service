@@ -23,7 +23,7 @@ the live host (§2.4; the v1.0.5–v1.0.7 releases had skipped this checklist).
 | C1 | **Env variable surface**: every `OCTBASE_*` variable's name and default | app repo `.env.example` + code defaults | app `podman-compose.yml` pass-through · this repo `env.j2` + `podman-compose.client.yml` · app `README.md` env table |
 | C2 | **Product limits sold = limits enforced**: min 5 seats, 10 MB/file, 0.5 GB/user | API code defaults (`main.go`: users 5, upload 10, storage 512) | `env.j2` (10/512) · client override fail-closed defaults · `ocete.ch` pricing note (“10 MB per file, 0.5 GB … per user”, “minimum 5 users”) |
 | C3 | **Edition model**: `team \| business \| enterprise`; Jira import = add-on on business only, included in enterprise, never on team | API `OCTBASE_EDITION` / `OCTBASE_OPTION_JIRA_IMPORT` gating | `ledger.py` (`EDITIONS`, add-on rule) · `create-instance.yml` assert · `ocete.ch/pricing.html` (add-on shown only on the Business card) |
-| C4 | **Version stamping**: a deployed `OCTBASE_APP_VERSION` must correspond to a dated `CHANGELOG.md` release entry | app repo `CHANGELOG.md` (release skill renames `Unreleased`) | `OCTBASE_APP_VERSION` in dev/demo `.env` · `octbase_version` in `inventory/group_vars/all.yml` · `app_version` per ledger entry |
+| C4 | **Version stamping**: a deployed `OCTBASE_APP_VERSION` must correspond to a dated `CHANGELOG.md` release entry | app repo `CHANGELOG.md` (release skill renames `Unreleased`) | `OCTBASE_APP_VERSION` in dev/demo `.env` · `octbase_version` in `inventory/group_vars/all/main.yml` · `app_version` per ledger entry |
 | C5 | **API surface**: served routes = `api/openapi.yaml` = app `README.md` API reference | chi router | `TestEveryRouteIsDocumented` covers routes→spec **only** — a route removed from code is *not* flagged when it lingers in the spec or README; check those by hand |
 | C6 | **Health contract**: `GET /health` returns 200 on the API port *and* through the frontend Caddy (`@backend` matcher) | app repo (API `main.go`, frontend `Caddyfile`) | `create-instance.yml` / `set-max-users.yml` health waits · `check-health.sh` · `monitor-all.sh` edge probe · external uptime checks |
 | C7 | **Compose project/container naming**: client stacks use `COMPOSE_PROJECT_NAME=octbase` → containers `octbase_<service>_1` | `env.j2` | `remove-instance.yml` (`podman exec octbase_postgres_1`) · `set-max-users.yml` (compose-service label filter) · `monitor-all.sh` (`--project octbase`) · `backup-fleet.sh` + `migrate-host.yml` (`octbase_postgres_1`, api label filter) |
@@ -34,10 +34,10 @@ the live host (§2.4; the v1.0.5–v1.0.7 releases had skipped this checklist).
 | C14 | **Built image names are per compose project** (`localhost/${COMPOSE_PROJECT_NAME}-api` …): two checkouts of the app repo on one host must never overwrite each other's image tags | app `podman-compose.yml` | dev (`octbase_dev`) vs demo (`octbase`) vs client (`octbase`, one per user namespace) builds |
 | C15 | **Edge proxy targets**: the root-managed edge Caddyfile's `reverse_proxy` targets must match how the stacks bind their frontend ports | `/etc/caddy/Caddyfile` (root) | `FRONTEND_PORT`/`WEB_PORT` values in the three resident `.env` files; currently the edge targets the host's **public IP**, so those three ports must stay on `0.0.0.0` (see §2.1) |
 | C12 | **Public claims = platform facts**: hosting location, data handling, feature/limit statements on `ocete.ch` | privacy policy / terms (legal texts) | marketing copy (features, pricing) · security concept · actual hosting |
-| C13 | **Deploy source**: `octbase_src` must point at the released commit with a **clean tree** — `create-instance.yml` rsyncs the working tree as-is | `inventory/group_vars/all.yml` | state of `~/dev.ocete.ch` at rollout time (a live dev checkout, often on a release branch with uncommitted work) |
+| C13 | **Deploy source**: `octbase_src` must point at the released commit with a **clean tree** — `create-instance.yml` rsyncs the working tree as-is | `inventory/group_vars/all/main.yml` | state of `~/dev.ocete.ch` at rollout time (a live dev checkout, often on a release branch with uncommitted work) |
 | C16 | **Client registry conf format** (`/etc/octbase/clients.d/<name>.conf`): `NAME`/`USER_ACCT`/`DOMAIN`/`FRONTEND_PORT`/`API_PORT`/`HOME_DIR`/`DISK_QUOTA_GB` (+ optional `EDGE_PROBE`) — sourced as shell variables | `playbooks/templates/client-registry.conf.j2` | `monitor-all.sh` (health, edge, disk) · `backup-fleet.sh` (dump + files) — a key rename must touch all three |
 | C17 | **Instance placement**: a ledger `host:` value must name an entry in `inventory/hosts.yml`; per-client playbooks no-op on every other host, so a wrong value silently deploys nowhere (guarded by an assert + `ledger.py validate`) | `ledger/clients/*.yml` (`host:`) + `default_client_host` in group_vars | `inventory/hosts.yml` host names · the `end_host` guards in every per-client playbook |
-| C13b | **Git deploy source**: `sync-instance.yml` deploys `octbase_branch` (default `main`) of `octbase_repo` instead of the `octbase_src` working tree — same rsync excludes, but a clean branch tip, not local edits. It does **not** re-stamp `OCTBASE_APP_VERSION` (that stays ledger/create-instance-driven, C4), so a branch synced ahead of its stamped version reports a stale version until `create-instance.yml` re-runs | `inventory/group_vars/all.yml` (`octbase_repo`/`octbase_branch`) | `sync-instance.yml` · app repo branch tip · C4 version stamp |
+| C13b | **Git deploy source**: `sync-instance.yml` deploys `octbase_branch` (default `main`) of `octbase_repo` instead of the `octbase_src` working tree — same rsync excludes, but a clean branch tip, not local edits. It does **not** re-stamp `OCTBASE_APP_VERSION` (that stays ledger/create-instance-driven, C4), so a branch synced ahead of its stamped version reports a stale version until `create-instance.yml` re-runs | `inventory/group_vars/all/main.yml` (`octbase_repo`/`octbase_branch`) | `sync-instance.yml` · app repo branch tip · C4 version stamp |
 
 ## 2. Drift found 2026-07-10 — all fixed same day
 
@@ -170,7 +170,7 @@ where "a git pull won't work" — today both are `frasseck/octbase` and the
 demo's normal deploy path IS `git pull` (restart.sh / release skill). Header
 rewritten: the script is an escape hatch for pushing an unmerged tree, and
 the next `git pull` deploy overwrites whatever it synced. The related stale
-comment on `octbase_src` in this repo's `group_vars/all.yml` was tightened to
+comment on `octbase_src` in this repo's `group_vars/all/main.yml` was tightened to
 the actual contract (released commit, clean tree — C13).
 
 ### F4 — `docs/operations.md` env table had the same staleness as the main README (C1) — **fixed**
@@ -438,7 +438,7 @@ grep -oE '^OCTBASE_[A-Z_]+' playbooks/templates/env.j2 | sort -u \
 # C4 — stamped versions have a changelog entry
 grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev ~/demo.ocete.ch/.env
 grep -m1 '^## v' $OCTBASE_SRC/CHANGELOG.md
-grep '^octbase_version' inventory/group_vars/all.yml
+grep '^octbase_version' inventory/group_vars/all/main.yml
 
 # C5 — spec/README paths that no longer exist in code (reverse parity, manual)
 grep -oE '/api/v1/[a-z0-9/{}._-]+' $OCTBASE_SRC/api/openapi.yaml | sort -u \

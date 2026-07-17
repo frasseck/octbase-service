@@ -2,7 +2,7 @@
 # Resource caps for client "{{ client }}" ({{ fqdn }}) — the whole account:
 # every container of the stack AND image builds run inside this slice.
 # Source of truth: resources block in ledger/clients/{{ client }}.yml
-# (defaults: client_default_resources in inventory/group_vars/all.yml).
+# (defaults: client_default_resources in inventory/group_vars/all/main.yml).
 # Apply changes with set-resources.yml; verify with
 #   systemctl show user-{{ client_uid }}.slice -p MemoryMax,CPUQuota,TasksMax,MemoryCurrent
 [Slice]

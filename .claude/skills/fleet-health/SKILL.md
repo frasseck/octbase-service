@@ -51,7 +51,7 @@ journalctl -u octbase-monitor.service -n 50          # runs every 5 min; alerts 
 ls /etc/octbase/clients.d/                           # registered clients (maintained by playbooks)
 ```
 
-Alert mail goes to `alert_email` in `inventory/group_vars/all.yml` ("" =
+Alert mail goes to `alert_email` in `inventory/group_vars/all/main.yml` ("" =
 journal only). A client pending DNS/edge can have `monitor_edge_probe: false`
 in its ledger file.
 

@@ -23,7 +23,7 @@ update it.
   Never leave the ledger diverging from what was applied (extra-vars beat the
   ledger; if an override was used, sync the ledger afterwards).
 - The ledger holds no secrets — never write passwords, JWT secrets, or SMTP
-  credentials into `ledger/clients/*.yml` or `group_vars/all.yml`.
+  credentials into `ledger/clients/*.yml` or `group_vars/all/main.yml`.
 - `remove-instance.yml` deletes the Linux account and all data. It requires
   `-e confirm=<name>` and takes a final backup by default; never suggest
   `skip_backup=true` unless the user explicitly wants that.
@@ -61,7 +61,7 @@ limits (`OCTBASE_MAX_UPLOAD_MB`, `OCTBASE_MAX_USER_STORAGE_MB`) are
 deliberately **not** ledger-managed — one-off deals are edited in the
 client's `.env` on the server and the stack restarted.
 
-Changing a platform-wide value in `inventory/group_vars/all.yml` (SMTP,
+Changing a platform-wide value in `inventory/group_vars/all/main.yml` (SMTP,
 trusted proxies, retention) requires re-running `create-instance.yml` for
 **every active client**.
 
@@ -70,7 +70,7 @@ trusted proxies, retention) requires re-running `create-instance.yml` for
 Prerequisite: the app release is done (app repo `release` skill) and the demo
 is deployed. Then, in this repo:
 
-1. Bump `octbase_version` in `inventory/group_vars/all.yml` (and/or
+1. Bump `octbase_version` in `inventory/group_vars/all/main.yml` (and/or
    `app_version` per ledger entry) — must match a dated entry in the app
    repo's `CHANGELOG.md` (contract C4).
 2. Verify the deploy source: `git -C ~/dev.ocete.ch status -sb` must show the
@@ -88,7 +88,7 @@ below instead.
 ## Sync an instance to a branch (main)
 
 `sync-instance.yml` deploys `octbase_branch` (default `main`, from
-`octbase_repo` in `group_vars/all.yml`) of the app repo instead of the
+`octbase_repo` in `group_vars/all/main.yml`) of the app repo instead of the
 `octbase_src` working tree — the git-branch deploy path (register C13b),
 distinct from the release rollout above.
 
