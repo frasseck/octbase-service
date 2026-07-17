@@ -6,7 +6,7 @@
 # Deploys the app repo's check-health.sh + this repo's monitor-all.sh and a
 # systemd timer that probes every registered client (clients.d/*.conf) every
 # 5 minutes. Alerting is configured via alert_email / edge_probe in
-# inventory/group_vars/all.yml.
+# inventory/group_vars/all/main.yml.
 - name: Install Octbase fleet monitoring
   hosts: octbase_hosts
   become: true

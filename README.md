@@ -51,7 +51,8 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `ledger/clients/*.yml` | **The client ledger** — one file per client, committed to git |
 | `ledger/ledger.py` | Ledger CLI: `new`, `list`, `validate`, `next-ports` |
 | `inventory/hosts.yml` | The production host(s) Ansible connects to |
-| `inventory/group_vars/all.yml` | Platform-wide defaults (domain, SMTP relay, source path, …) |
+| `inventory/group_vars/all/main.yml` | Platform-wide defaults (domain, SMTP relay, source path, …) |
+| `inventory/group_vars/all/vault.yml` | Ansible Vault: the SMTP relay password (`vault.yml.sample` documents it) |
 | `playbooks/create-instance.yml` | Create **or update** a client instance from its ledger entry |
 | `playbooks/sync-instance.yml` | Sync an existing instance's code to an app-repo branch (default `main`), rebuild + restart |
 | `playbooks/remove-instance.yml` | Back up and remove a client instance (needs `confirm=`) |
@@ -84,7 +85,7 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
   `ansible.builtin.systemd_service`, which does not exist before core 2.15 —
   don't trust older docs that claimed 2.14 worked.
 - A checkout of the app repo (`frasseck/octbase.git`) at the release you want
-  to ship. Its path is `octbase_src` in `inventory/group_vars/all.yml`.
+  to ship. Its path is `octbase_src` in `inventory/group_vars/all/main.yml`.
 - SSH root access to the production host (or a sudo user — then set
   `ansible_user` accordingly and add `rsync_path: sudo rsync` to the sync task).
 
@@ -159,7 +160,7 @@ Verify: `curl -s https://acme.ocete.ch/health` → `{"status":"ok",…}`.
 
 Edit the ledger file, commit, and re-run the create playbook — it is
 idempotent and re-applies the ledger-managed settings without touching
-secrets or data. Platform-wide values from `inventory/group_vars/all.yml`
+secrets or data. Platform-wide values from `inventory/group_vars/all/main.yml`
 (SMTP relay, trusted proxies, retention days) are re-synced into the client's
 `.env` on the same run — so after changing one of those, re-run the playbook
 for **every** active client:
@@ -349,7 +350,7 @@ What it does on each host:
   (machine-readable, one object per client: `OK | DEGRADED | DOWN`, plus
   `disk_bytes` / `disk_pct`),
 - on any **state change** sends a mail via the local `sendmail` to
-  `alert_email` (set it in `inventory/group_vars/all.yml`) and always logs to
+  `alert_email` (set it in `inventory/group_vars/all/main.yml`) and always logs to
   the journal: `journalctl -u octbase-monitor.service`.
 
 Ad-hoc fleet status: `sudo /usr/local/lib/octbase/monitor-all.sh --print`.
@@ -357,7 +358,7 @@ Ad-hoc fleet status: `sudo /usr/local/lib/octbase/monitor-all.sh --print`.
 The public-edge probe can be disabled per client while its DNS/edge setup is
 still pending: set `monitor_edge_probe: false` in the client's ledger file and
 re-run `create-instance.yml` (remove the field and re-run once the client is
-live). The global default is `edge_probe` in `inventory/group_vars/all.yml`.
+live). The global default is `edge_probe` in `inventory/group_vars/all/main.yml`.
 
 For external ("is the site reachable at all") coverage, point any uptime
 service at `https://<name>.ocete.ch/health` — the same endpoint the monitor
@@ -382,7 +383,7 @@ here: rootless podman is per-user, so no single account can see all client
 containers. Results: `{{ fleet_backup_root }}/<client>/` + `backup.log`;
 failures exit non-zero so systemd surfaces them.
 
-Off-host copies: set `backup_offhost_cmd` in `inventory/group_vars/all.yml`
+Off-host copies: set `backup_offhost_cmd` in `inventory/group_vars/all/main.yml`
 (e.g. an `rclone sync` to versioned, client-side-encrypted object storage)
 and re-run the install playbook — the command runs after every backup and its
 failure fails the unit. Until it is set, backups stay on the host they
@@ -422,6 +423,38 @@ with both files.
   with `podman network inspect octbase_default` inside a client account).
 - Blast radius per client = one Linux account: distinct user namespaces,
   distinct DBs, per-service resource limits from the base compose file.
+
+### Secrets & the SMTP vault
+
+This repo carries exactly one secret: the platform's SMTP relay password.
+Everything else per client (DB password, JWT/SCM/MFA secrets) is generated at
+first deploy and never leaves the client's `.env` on the server.
+
+That password lives in `inventory/group_vars/all/vault.yml`, encrypted with
+Ansible Vault, as `vault_smtp_pass`; `main.yml` only references it
+(`smtp_pass: "{{ vault_smtp_pass | default('') }}"`). The encrypted file **is**
+committed — the ciphertext is the point. The vault password is not in this
+repo. `inventory/group_vars/all/vault.yml.sample` documents the file.
+
+```bash
+ansible-vault create inventory/group_vars/all/vault.yml   # first time
+ansible-vault edit   inventory/group_vars/all/vault.yml   # rotate
+ansible-vault view   inventory/group_vars/all/vault.yml   # read-only check
+```
+
+Every playbook run then needs the vault password — either `--ask-vault-pass`,
+or `export ANSIBLE_VAULT_PASSWORD_FILE=~/.octbase-vault-pass` (mode 0600, kept
+**outside** the repo) to skip the prompt:
+
+```bash
+ansible-playbook playbooks/create-instance.yml -e client=acme --ask-vault-pass
+```
+
+Absent `vault.yml`, `smtp_pass` falls back to empty — the relay is then
+unauthenticated (with `smtp_host` empty the API just logs mail to stdout), so
+a missing vault degrades mail rather than breaking a deploy. After rotating
+the password, re-run `create-instance.yml` for **every** active client: the
+`.env` files are only updated on a playbook run.
 
 ## Platform documentation
 

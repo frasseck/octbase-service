@@ -30,13 +30,15 @@ octbase_version: "1.0.7"
 
 # SMTP relay for outgoing app mail (invitations, notifications). Leaving the
 # host empty makes the API log mail to stdout — set a real relay before
-# onboarding production clients. Put the password in an Ansible Vault file
-# rather than in plain text here.
+# onboarding production clients. The password is the one secret here: it lives
+# in vault.yml next to this file (see vault.yml.sample), never in plain text.
+# Without that vault file the relay stays unauthenticated — which is why the
+# default is empty rather than an error.
 smtp_host: ""
 smtp_port: 587
 smtp_from: noreply@beyags.com
 smtp_user: ""
-smtp_pass: ""
+smtp_pass: "{{ vault_smtp_pass | default('') }}"
 
 # CIDRs whose X-Forwarded-For the API honors (the stack's own frontend Caddy
 # plus the edge proxy). 10.89.0.0/16 is the default rootless-podman network

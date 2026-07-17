@@ -1,2 +1,4 @@
 __pycache__/
 *.retry
+# The vault password belongs outside the repo — guard against a stray copy.
+.vault-pass*

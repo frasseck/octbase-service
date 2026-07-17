@@ -67,11 +67,14 @@ platform state:
   `status: removed` — it is the historical record.
 - **No secrets in the ledger or this repo.** Per-client secrets are generated
   at first deploy and live only in the client's `.env` on the server (0600).
-  SMTP credentials belong in Ansible Vault, not `group_vars/all.yml`.
+  The one repo-side secret, the SMTP relay password, lives encrypted in
+  `inventory/group_vars/all/vault.yml` (`vault_smtp_pass`) — never in
+  plain text in `group_vars/all/main.yml`. Playbook runs need the vault
+  password (`--ask-vault-pass` or `ANSIBLE_VAULT_PASSWORD_FILE`).
 - **`create-instance.yml` is also the update path** — it is idempotent and
   re-applies ledger- and platform-managed settings without touching secrets
   or data. A change to `env.j2`, the client compose override, or
-  `group_vars/all.yml` reaches clients only when the playbook is re-run for
+  `group_vars/all/main.yml` reaches clients only when the playbook is re-run for
   each active client.
 - **Cross-repo contracts are conventions, not CI.** Before changing env
   variables, ports, editions, limits, versions, or health probing anywhere,
@@ -80,7 +83,7 @@ platform state:
   `.env.example` and compose file (contracts C1/C2), `ledger.py`'s
   `RESERVED_PORTS`/`RESERVED_NAMES`/`EDITIONS` mirror host and product facts
   (C3/C8/C10). Record found drift in the register's §2 with a date.
-- **Version stamping:** `octbase_version` in `inventory/group_vars/all.yml`
+- **Version stamping:** `octbase_version` in `inventory/group_vars/all/main.yml`
   (and per-client `app_version`) must correspond to a dated release entry in
   the app repo's `CHANGELOG.md` (contract C4).
 - **Docs carry state:** `docs/production-readiness-plan.md` owns the ordered

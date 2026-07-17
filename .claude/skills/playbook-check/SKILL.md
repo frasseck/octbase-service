@@ -50,7 +50,7 @@ available here. These local checks catch the mechanical errors; recommend a
    ```
 
 4. **Variable wiring** — for each `{{ var }}` you added to a template or
-   playbook, confirm it is defined in `inventory/group_vars/all.yml`, set by
+   playbook, confirm it is defined in `inventory/group_vars/all/main.yml`, set by
    the playbook (`set_fact`/`vars:`), or a documented ledger field
    (`ledger/clients/_example.yml.sample`). Grep, don't assume:
    ```bash
