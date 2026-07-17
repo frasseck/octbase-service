@@ -23,6 +23,12 @@ services:
       OCTBASE_JWT_ACCESS_TTL: "${OCTBASE_JWT_ACCESS_TTL:-15m}"
       OCTBASE_JWT_REFRESH_TTL: "${OCTBASE_JWT_REFRESH_TTL:-1h}"
       OCTBASE_LOG_LEVEL: "${OCTBASE_LOG_LEVEL:-info}"
+      # Initial administrator, consumed by the API only while the users table
+      # is empty (app: internal/bootstrap). Blank default = no bootstrap, which
+      # is the right fail-closed behaviour: an instance that already has users
+      # must never grow an account from a stray environment variable.
+      OCTBASE_BOOTSTRAP_ADMIN_EMAIL: "${OCTBASE_BOOTSTRAP_ADMIN_EMAIL:-}"
+      OCTBASE_BOOTSTRAP_ADMIN_PASSWORD_HASH: "${OCTBASE_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}"
       # Commercial configuration from the ledger. Defaults fail CLOSED: a
       # missing .env key must never grant a higher edition or more seats
       # than the client booked.

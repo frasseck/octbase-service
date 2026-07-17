@@ -84,6 +84,9 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
   `openssl`, Python 3 with PyYAML (Ansible brings it). The playbooks use
   `ansible.builtin.systemd_service`, which does not exist before core 2.15 —
   don't trust older docs that claimed 2.14 worked.
+- The `bcrypt` Python module (`apt install python3-bcrypt`), to hash a client's
+  initial admin password. Needed on a **first** deploy only; `create-instance.yml`
+  fails with that instruction if it is missing.
 - A checkout of the app repo (`frasseck/octbase.git`) at the release you want
   to ship. Its path is `octbase_src` in `inventory/group_vars/all/main.yml`.
 - SSH root access to the production host (or a sudo user — then set
@@ -156,6 +159,40 @@ The playbook then prints the two **manual** steps:
 
 Verify: `curl -s https://acme.ocete.ch/health` → `{"status":"ok",…}`.
 
+On the **first** deploy only, the playbook also provisions the instance's
+initial administrator, and prints the credentials as its last output:
+
+```
+Initial SUPER_ADMIN for acme.ocete.ch — shown once, not recoverable:
+  login:    admin@acme.ocete.ch
+  password: <24 random characters>
+```
+
+It generates the password on the admin machine, writes only its **bcrypt hash**
+into the client's `.env` (`OCTBASE_BOOTSTRAP_ADMIN_EMAIL` /
+`OCTBASE_BOOTSTRAP_ADMIN_PASSWORD_HASH`), and the app creates the `SUPER_ADMIN`
+from those at its first start, while the users table is still empty. The
+plaintext is never written anywhere — not to the repo, the ledger, or the
+`.env` — so that printout is genuinely the only copy. Hand it over on a secure
+channel (not email) and have the client change it after first login.
+
+Without this the instance would have no way in at all: the app has no public
+signup and no first-run flow, its user API refuses to assign `SUPER_ADMIN`, and
+an invited user always lands as `USER`.
+
+Re-runs are inert: `.env` already exists, so it is not rewritten, no password is
+generated or printed, and the app ignores the bootstrap keys once the
+installation has users (a stale or malformed value there can never keep a
+running instance from booting).
+
+**If the password is lost**, the recovery is to replace it, not to re-run the
+playbook — the `.env` still holds the *old* hash, so re-bootstrapping would just
+restore the password you no longer have. On the client's host, as `oct-<name>`:
+hash a new password, put it in `~/octbase/.env` as
+`OCTBASE_BOOTSTRAP_ADMIN_PASSWORD_HASH`, delete the admin row
+(`podman exec octbase_postgres_1 psql -U octbase -d octbase -c "DELETE FROM users WHERE email = 'admin@acme.ocete.ch'"`),
+then `systemctl --user restart octbase`.
+
 ### Change a client's configuration (edition, add-on, version, seats)
 
 Edit the ledger file, commit, and re-run the create playbook — it is
@@ -194,11 +231,13 @@ time, so every sync run causes a brief restart, even when the tree is already
 at the branch tip.
 
 It is **update-only**: it refuses if the instance isn't provisioned yet, and it
-never touches the `.env`, secrets, data, ports, or ledger-managed settings. To
-also re-apply ledger/platform `.env` settings, run `create-instance.yml`; to
-bump the `OCTBASE_APP_VERSION` stamp, edit the ledger and run
-`create-instance.yml`. Make sure the branch is at or above the running schema
-version before syncing a live instance.
+never touches secrets, data, ports, or ledger-managed settings. The one `.env`
+line it writes is the `OCTBASE_APP_VERSION` stamp, re-applied from the ledger
+(`app_version`, else `octbase_version`) so a sync can't leave the stamp behind
+the code — to change it, edit the ledger entry *before* syncing. To re-apply
+the other ledger/platform `.env` settings, run `create-instance.yml`. Make sure
+the branch is at or above the running schema version before syncing a live
+instance.
 
 ### Set OCTBASE_MAX_USERS
 

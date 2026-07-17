@@ -15,6 +15,7 @@
     home_dir: "/home/{{ linux_user }}"
     app_dir: "{{ home_dir }}/{{ client_app_subdir }}"
     fqdn: "{{ client }}.{{ base_domain }}"
+    admin_email: "admin@{{ client }}.{{ base_domain }}"
 
   pre_tasks:
     - name: Load client ledger entry
@@ -206,6 +207,105 @@
         group: "{{ linux_user }}"
         mode: "0700"
 
+    # ── Initial administrator (first deploy only) ──────────────────────────
+    # A fresh instance has an empty users table and no way in: the app has no
+    # public signup and no first-run flow, its user API refuses to assign
+    # SUPER_ADMIN, and an invited user always lands as USER. So env.j2 hands
+    # the app a first SUPER_ADMIN, which it creates at startup while the users
+    # table is still empty (app: internal/bootstrap) and ignores forever after.
+    #
+    # The gate is "does the .env already exist", not "does the instance have
+    # users": env.j2 is written with force:false, so an existing .env is never
+    # rewritten and its bootstrap keys — already consumed — stay as they are.
+    # That also keeps this ahead of the stack ever starting, which a live
+    # database query could not be.
+    - name: Check whether this client already has an .env
+      ansible.builtin.stat:
+        path: "{{ app_dir }}/.env"
+      register: client_env
+
+    - name: Set the first-admin fact
+      ansible.builtin.set_fact:
+        needs_admin: "{{ not client_env.stat.exists }}"
+
+    # The bootstrap keys env.j2 writes are inert on an app build that predates
+    # internal/bootstrap: the instance would come up with no admin, and this
+    # play would still print a password that could never log in. Refuse instead
+    # — a source tree that cannot honour the .env is a rollout ordering
+    # mistake, not a client problem. Checks the synced tree, which is what the
+    # image is built from two tasks below.
+    - name: The synced app source must support the admin bootstrap
+      ansible.builtin.stat:
+        path: "{{ app_dir }}/octbase-api/internal/bootstrap/bootstrap.go"
+      register: app_bootstrap_pkg
+      when: needs_admin | bool
+
+    - name: App source must be new enough to create the first admin
+      ansible.builtin.assert:
+        that: app_bootstrap_pkg.stat.exists
+        fail_msg: >-
+          The app source in {{ app_dir }} has no internal/bootstrap package, so
+          it would ignore the OCTBASE_BOOTSTRAP_ADMIN_* keys and come up with no
+          way to log in. Point octbase_src at a release that includes the admin
+          bootstrap and re-run.
+      when: needs_admin | bool
+
+    # 24 chars from [A-Za-z0-9]: clears the app's 12-char minimum and its
+    # common-password blocklist (app: internal/shared/password.go). Generated
+    # on the admin machine like the secrets in the pre_tasks above — but unlike
+    # those, the plaintext is never written anywhere. It is printed once at the
+    # end of this play; only its bcrypt hash reaches the .env and the database.
+    - name: Generate the initial admin password
+      ansible.builtin.set_fact:
+        gen_admin_password: "{{ lookup('password', '/dev/null length=24 chars=ascii_letters,digits') }}"
+      no_log: true
+      when: needs_admin | bool
+
+    - name: Check for the bcrypt module on the admin machine
+      delegate_to: localhost
+      become: false
+      ansible.builtin.command:
+        argv: [python3, -c, "import bcrypt"]
+      register: bcrypt_probe
+      changed_when: false
+      failed_when: false
+      when: needs_admin | bool
+
+    - name: The admin machine must be able to hash the password
+      ansible.builtin.assert:
+        that: bcrypt_probe.rc == 0
+        fail_msg: >-
+          python3 -c 'import bcrypt' failed on the admin machine — install it
+          (apt install python3-bcrypt, or pip install bcrypt) and re-run.
+          It is needed on a client's FIRST deploy only, to hash the initial
+          admin password for {{ fqdn }}.
+      when: needs_admin | bool
+
+    # Cost 12 matches the app's own hashes. python3's bcrypt emits $2b$ where
+    # the app emits $2a$; the Go bcrypt the API verifies with checks only the
+    # major version, so a $2b$ hash logs in normally.
+    - name: Hash the initial admin password
+      delegate_to: localhost
+      become: false
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import bcrypt, sys
+            sys.stdout.write(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt(12)).decode())
+          - "{{ gen_admin_password }}"
+      register: admin_hash
+      changed_when: false
+      no_log: true
+      when: needs_admin | bool
+
+    - name: Set the initial admin hash for the .env template
+      ansible.builtin.set_fact:
+        gen_admin_password_hash: "{{ admin_hash.stdout | trim }}"
+      no_log: true
+      when: needs_admin | bool
+
     - name: Write .env (first deploy only — holds the generated secrets)
       ansible.builtin.template:
         src: env.j2
@@ -353,6 +453,21 @@
           - "2) Edge proxy: snippet written to {{ edge_snippet_dir }}/{{ client }}.caddy —"
           - "   ensure the edge Caddyfile has 'import {{ edge_snippet_dir }}/*.caddy', then reload it."
           - "3) Verify: curl -s https://{{ fqdn }}/health"
+          - "4) First login: see the admin credentials printed below (first deploy only)."
+
+    # Last task in the play, deliberately: this is the only time the password
+    # is ever shown. It is not recoverable afterwards — only the bcrypt hash
+    # is stored. If it is lost, delete the admin row and re-run this playbook
+    # to mint a new one.
+    - name: Initial admin credentials — store these now
+      ansible.builtin.debug:
+        msg:
+          - "Initial SUPER_ADMIN for {{ fqdn }} — shown once, not recoverable:"
+          - "  login:    {{ admin_email }}"
+          - "  password: {{ gen_admin_password }}"
+          - "Hand these to the client over a secure channel (not email), and have"
+          - "them change the password after first login."
+      when: needs_admin | bool
 
   handlers:
     - name: Restart stack
