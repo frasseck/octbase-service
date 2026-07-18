@@ -384,8 +384,12 @@
 - ansible.builtin.import_playbook: create-instance.yml
   vars:
     # Migration runs on the platform host itself: reuse the source checkout
-    # already present there instead of requiring admin-machine octbase_src.
+    # already present there instead of fetching the ledger's release tag.
     octbase_src_remote: "{{ source_dir }}"
+    # Phase 3 drops this database and restores the source dump over it, which
+    # brings the real users with it. An admin bootstrapped here would be wiped
+    # by that restore, and its printed password would never have worked.
+    skip_admin_bootstrap: true
 
 - name: Migrate Octbase installation — phase 3 of 3, restore data & cut the edge over
   hosts: octbase_hosts

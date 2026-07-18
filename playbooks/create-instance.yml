@@ -147,9 +147,60 @@
           (docs/fleet-concept.md §3).
       when: quota_set.rc != 0
 
-    - name: Sync application source from admin machine
+    # ── Deploy source: the ledger's app_version selects the code ───────────
+    # app_version picks the app repo tag AND stamps OCTBASE_APP_VERSION, so a
+    # client cannot run code that disagrees with its own version stamp (C4).
+    # This replaces an rsync of the octbase_src working tree, whose "released
+    # commit, clean tree" contract (C13) was upheld by hand and in practice
+    # shipped whatever branch — and whatever uncommitted edit — the admin's
+    # live dev checkout happened to be sitting on.
+    # The migrate playbooks import this play with octbase_src_remote to reuse
+    # the source already on the host; that path is untouched below.
+    - name: Resolve the release tag for this client
+      ansible.builtin.set_fact:
+        client_release_tag: "v{{ client_ledger.app_version | default(octbase_version) }}"
+
+    - name: Check the release tag exists in the app repo
+      delegate_to: localhost
+      become: false
+      ansible.builtin.command:
+        argv:
+          - git
+          - ls-remote
+          - --exit-code
+          - "{{ octbase_repo }}"
+          - "refs/tags/{{ client_release_tag }}"
+      register: release_tag_probe
+      changed_when: false
+      failed_when: false
+      when: octbase_src_remote is not defined
+
+    - name: The client's app_version must name a real release tag
+      ansible.builtin.assert:
+        that: release_tag_probe.rc == 0
+        fail_msg: >-
+          {{ octbase_repo }} has no tag '{{ client_release_tag }}', which is
+          what app_version
+          '{{ client_ledger.app_version | default(octbase_version) }}' selects
+          for {{ client }}. Tag the release in the app repo (and give it a dated
+          CHANGELOG.md entry — C4), or point the ledger's app_version at a
+          version that is already tagged.
+      when: octbase_src_remote is not defined
+
+    - name: Fetch the release on the admin machine
+      delegate_to: localhost
+      become: false
+      ansible.builtin.git:
+        repo: "{{ octbase_repo }}"
+        dest: "{{ octbase_release_cache }}"
+        version: "{{ client_release_tag }}"
+        depth: 1
+        force: true
+      when: octbase_src_remote is not defined
+
+    - name: Sync application source from the release cache
       ansible.posix.synchronize:
-        src: "{{ octbase_src }}/"
+        src: "{{ octbase_release_cache }}/"
         dest: "{{ app_dir }}/"
         archive: true
         delete: false
@@ -224,9 +275,16 @@
         path: "{{ app_dir }}/.env"
       register: client_env
 
+    # skip_admin_bootstrap is set by the migrate playbooks, which import this
+    # play to build the account and then DROP/restore the database over it. A
+    # bootstrapped admin would be wiped by that restore, so creating one is
+    # pointless — and printing its password would be a lie, since the restored
+    # dump brings the real users. The migrated instance is not empty; it only
+    # looks empty at this point in the run.
     - name: Set the first-admin fact
       ansible.builtin.set_fact:
-        needs_admin: "{{ not client_env.stat.exists }}"
+        needs_admin: >-
+          {{ (not client_env.stat.exists) and not (skip_admin_bootstrap | default(false)) }}
 
     # The bootstrap keys env.j2 writes are inert on an app build that predates
     # internal/bootstrap: the instance would come up with no admin, and this

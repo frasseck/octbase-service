@@ -24,8 +24,17 @@ octbase_repo: "git@github.com:frasseck/octbase.git"
 octbase_branch: main
 octbase_git_cache: "{{ lookup('env', 'HOME') }}/.cache/octbase-service/octbase"
 
-# Default OCTBASE_APP_VERSION stamp when a ledger entry has no app_version.
-# Keep in step with the latest release entry in the app repo's CHANGELOG.md.
+# Clone ON THE ADMIN MACHINE that create-instance.yml deploys clients from: the
+# release tag app_version selects, checked out fresh per run. Kept separate from
+# octbase_git_cache because that one is a single-branch clone for
+# sync-instance's branch deploys, and a single-branch clone cannot fetch tags.
+octbase_release_cache: "{{ lookup('env', 'HOME') }}/.cache/octbase-service/octbase-releases"
+
+# Default OCTBASE_APP_VERSION when a ledger entry has no app_version. This is
+# not just a stamp: create-instance deploys the app repo tag v<version>, so the
+# value selects the code AND labels it, and the two cannot drift apart (C4).
+# Every value used here or in a ledger app_version must exist as a tag in
+# octbase_repo and as a dated release entry in the app repo's CHANGELOG.md.
 octbase_version: "1.0.7"
 
 # SMTP relay for outgoing app mail (invitations, notifications). Leaving the

@@ -34,7 +34,7 @@ the live host (§2.4; the v1.0.5–v1.0.7 releases had skipped this checklist).
 | C14 | **Built image names are per compose project** (`localhost/${COMPOSE_PROJECT_NAME}-api` …): two checkouts of the app repo on one host must never overwrite each other's image tags | app `podman-compose.yml` | dev (`octbase_dev`) vs demo (`octbase`) vs client (`octbase`, one per user namespace) builds |
 | C15 | **Edge proxy targets**: the root-managed edge Caddyfile's `reverse_proxy` targets must match how the stacks bind their frontend ports | `/etc/caddy/Caddyfile` (root) | `FRONTEND_PORT`/`WEB_PORT` values in the three resident `.env` files; currently the edge targets the host's **public IP**, so those three ports must stay on `0.0.0.0` (see §2.1) |
 | C12 | **Public claims = platform facts**: hosting location, data handling, feature/limit statements on `ocete.ch` | privacy policy / terms (legal texts) | marketing copy (features, pricing) · security concept · actual hosting |
-| C13 | **Deploy source**: `octbase_src` must point at the released commit with a **clean tree** — `create-instance.yml` rsyncs the working tree as-is | `inventory/group_vars/all/main.yml` | state of `~/dev.ocete.ch` at rollout time (a live dev checkout, often on a release branch with uncommitted work) |
+| C13 | **Deploy source**: `create-instance.yml` deploys the app repo **tag `v<app_version>`** the ledger names, cloned fresh into `octbase_release_cache`. Every `app_version` (and `octbase_version`) must exist as a tag in `octbase_repo` — the play asserts this up front. **Structural, not a convention**: the version selects the code, so it cannot disagree with the stamp it writes (C4) | ledger `app_version` · `inventory/group_vars/all/main.yml` (`octbase_version`) | app repo tags · `create-instance.yml` · *(superseded the hand-managed `octbase_src` working-tree rsync — see D-series note below)* |
 | C16 | **Client registry conf format** (`/etc/octbase/clients.d/<name>.conf`): `NAME`/`USER_ACCT`/`DOMAIN`/`FRONTEND_PORT`/`API_PORT`/`HOME_DIR`/`DISK_QUOTA_GB` (+ optional `EDGE_PROBE`) — sourced as shell variables | `playbooks/templates/client-registry.conf.j2` | `monitor-all.sh` (health, edge, disk) · `backup-fleet.sh` (dump + files) — a key rename must touch all three |
 | C17 | **Instance placement**: a ledger `host:` value must name an entry in `inventory/hosts.yml`; per-client playbooks no-op on every other host, so a wrong value silently deploys nowhere (guarded by an assert + `ledger.py validate`) | `ledger/clients/*.yml` (`host:`) + `default_client_host` in group_vars | `inventory/hosts.yml` host names · the `end_host` guards in every per-client playbook |
 | C13b | **Git deploy source**: `sync-instance.yml` deploys `octbase_branch` (default `main`) of `octbase_repo` instead of the `octbase_src` working tree — same rsync excludes, but a clean branch tip, not local edits. It does **not** re-stamp `OCTBASE_APP_VERSION` (that stays ledger/create-instance-driven, C4), so a branch synced ahead of its stamped version reports a stale version until `create-instance.yml` re-runs | `inventory/group_vars/all/main.yml` (`octbase_repo`/`octbase_branch`) | `sync-instance.yml` · app repo branch tip · C4 version stamp |
@@ -426,6 +426,75 @@ stamped `OCTBASE_APP_VERSION=1.0.7` while running post-1.0.7 code. Same
 pattern as D3 and D10. **Fix:** cut the release in the app repo (the
 `release` skill renames `Unreleased` to a dated entry), then bump
 `octbase_version` here and re-run `create-instance.yml` per client.
+
+### D24 — `create-instance.yml` shipped whatever the admin's checkout held (C13) — **fixed 2026-07-17, structurally**
+Hit for real on the first `beyags` onboarding: the play rsynced `octbase_src`
+(`~/dev.ocete.ch` on the admin machine) as-is, and that checkout was on a
+commit predating the app's admin bootstrap, so the instance would have come up
+with no way to log in. C13 asked for "released commit, clean tree" and was
+upheld only by hand — nothing read the version, and a live dev checkout is
+exactly where uncommitted work sits. The failure was caught by
+`create-instance.yml`'s app-source assert rather than by C13.
+
+**Resolution:** the ledger's `app_version` now *selects* the code —
+`create-instance.yml` clones tag `v<app_version>` into `octbase_release_cache`
+and stamps the same value — so the deployed code and its `OCTBASE_APP_VERSION`
+cannot disagree, and no property of the admin machine's working tree can reach
+a client. C13 rewritten above; `octbase_src` now only feeds
+`install-monitoring.yml`.
+
+**Consequence for D23, which this does not fix but does enforce:** an untagged
+version is now a hard failure instead of silent drift. Deploying a client needs
+a real tag, and a tag is supposed to carry a dated CHANGELOG entry (C4) — so
+the release has to be cut rather than deferred. Only `v0.4.0` is tagged today;
+releases have been cut as branches (`release_v1`…`release_v19`), and the branch
+numbering (`release_v19`) is not the version numbering (`1.0.7`). **Tags must
+use the CHANGELOG/`app_version` scheme (`v1.0.8`), not the branch scheme.**
+
+## 2.6 Release alignment 2026-07-18 (v1.0.7 tagged, version playbook)
+
+### D25 — The platform's pinned version was not deployable (C4/C13) — **fixed**
+`octbase_version` was `1.0.7` and `ledger/clients/demo.yml` pinned
+`app_version: "1.0.7"`, but the app repo had **no `v1.0.7` tag** — only
+`v0.4.0`. Since D24 made `create-instance.yml` select code by tag and assert
+it exists (`create-instance.yml:178`), onboarding *any* client, or re-running
+the play for `demo` or `beyags`, would have aborted at that assert. The
+version numbers agreed everywhere; the object they named did not exist. This
+is the practical bite of the gap D24 flagged in the abstract.
+
+**Fixed:** annotated tag `v1.0.7` created on `1794fd3` — tip of `release_v17`,
+whose commit message is "release v1.0.7" and whose CHANGELOG has an empty
+`Unreleased` directly above `## v1.0.7 — 2026-07-14`. That is the release
+commit, not `release_v18`'s tip: v18 already carried post-1.0.7 work (the
+`/m/metrics` fix) under `Unreleased`, so tagging there would have stamped
+1.0.7 onto code that is really 1.0.8. Tag uses the `app_version` scheme per
+§2.5.
+
+Also fixed: the app repo's `.env.example` still shipped
+`OCTBASE_APP_VERSION=1.0.1` — the documented default was three releases
+stale, and it is the file C1 makes `env.j2` track. Now `1.0.7`.
+
+**Still open — D23 is unchanged.** 1.0.8 is not cut: `CHANGELOG.md` keeps its
+`Unreleased` section (release_v19's scope), there is no `v1.0.8` tag, and
+`octbase_version` stays `1.0.7`. A client provisioned today correctly gets
+1.0.7 code with a 1.0.7 stamp — consistent, just not current. Cutting 1.0.8
+means renaming `Unreleased` to a dated entry, tagging `v1.0.8`, bumping
+`octbase_version`, then `set-version.yml` per client.
+
+### C4 gained a playbook — `set-version.yml`
+Changing a live client's version previously had no single path: `app_version`
+selected code only at `create-instance.yml` time, and `sync-instance.yml`
+deploys a *branch* while re-stamping the version from the ledger — so the
+stamp and the code could be made to disagree by pointing a sync at a branch
+that isn't the ledger's version. `playbooks/set-version.yml` is the tag
+counterpart to `sync-instance.yml`: it asserts the tag exists before touching
+the instance, deploys `v<version>`, stamps `OCTBASE_APP_VERSION`, rebuilds,
+restarts, and then **reads `/api/v1/version` back and fails if the running
+instance disagrees with the requested version** — C4 verified against the
+live API rather than assumed from a file edit.
+
+**Not yet verified against a live run** — Ansible cannot execute from the
+production checkout; syntax- and Jinja-checked only, as with D22.
 
 ## 3. Review checklist (run per release, ~10 minutes)
 

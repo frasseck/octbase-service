@@ -3,12 +3,11 @@ display_name: Beyags
 contact: lars@beyags.com
 edition: team
 jira_import: false
-max_users: 5
+max_users: 10
 registered: '2026-07-16'
 status: active
 host: prod
 disk_quota_gb: 10
-# DNS + edge snippet still pending — remove once beyags.ocete.ch is live.
 monitor_edge_probe: false
 ports:
   frontend: 8130

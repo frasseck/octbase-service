@@ -103,14 +103,15 @@ Clones/updates the branch into a cache **on the admin machine**, rsyncs it into
 **only if the source changed** — rebuilds, restarts, gates on `/health`.
 Re-running on the branch tip is a no-op. Constraints an agent must respect:
 
-- **Update-only.** It refuses an unprovisioned instance and never touches the
-  `.env`, secrets, data, ports, or ledger-managed settings. Provision with
-  `create-instance.yml` first; suspended/removed clients are skipped
-  (`status == 'active'` assert).
-- **Does not re-stamp the version.** `OCTBASE_APP_VERSION` stays
-  ledger/create-instance-driven (C4), so a branch synced ahead of the stamped
-  `app_version` reports a stale version until `create-instance.yml` re-runs.
-  Mention this when syncing a live instance ahead of its release.
+- **Update-only.** It refuses an unprovisioned instance and never touches
+  secrets, data, ports, or ledger-managed settings — the one `.env` line it
+  writes is the version stamp (below). Provision with `create-instance.yml`
+  first; suspended/removed clients are skipped (`status == 'active'` assert).
+- **Re-stamps the version from the ledger.** `OCTBASE_APP_VERSION` is
+  re-applied from `app_version` (falling back to `octbase_version`) on every
+  run, so a sync cannot leave the stamp behind the code (C4). The ledger stays
+  the source of truth: to change the stamp, edit the ledger entry *before*
+  syncing — there is no `-e app_version=` override.
 - **Schema direction.** Make sure the branch is at or above the instance's
   running DB schema version before syncing — a downgrade is not handled.
 - Not a substitute for the release rollout when a client must be on a

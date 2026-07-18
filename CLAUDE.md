@@ -44,6 +44,7 @@ ansible-playbook playbooks/migrate-host.yml -e client=<name> -e source_host=<old
 ansible-playbook playbooks/suspend-instance.yml -e client=<name> -e confirm=<name>  # ledger status must be 'suspended'
 ansible-playbook playbooks/set-max-users.yml -e client=<name>
 ansible-playbook playbooks/set-resources.yml -e client=<name>     # apply memory/CPU/tasks caps + disk quota, no redeploy
+ansible-playbook playbooks/set-version.yml -e client=<name>       # deploy the ledger's app_version tag, stamp + verify via /api/v1/version
 ansible-playbook playbooks/install-monitoring.yml                 # all hosts
 ansible-playbook playbooks/install-backup.yml                     # all hosts (nightly per-client backup)
 ```

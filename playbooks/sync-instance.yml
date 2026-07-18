@@ -14,10 +14,12 @@
 # the images at build time, so every run causes a brief restart, even when the
 # tree is already at the branch tip.
 #
-# Data (pgdata, attachments), the .env and its secrets, ports and ledger-managed
-# settings are left untouched. To also re-apply ledger/platform .env settings,
-# run create-instance.yml (idempotent); to bump the version stamp, edit the
-# ledger and run create-instance.yml. Deploy-source contract: C13 covers the
+# Data (pgdata, attachments), the .env secrets, ports and ledger-managed
+# settings are left untouched — the sole exception is OCTBASE_APP_VERSION, which
+# is re-applied from the ledger so a sync cannot leave the stamp behind the code
+# (C4); edit app_version in the ledger first. To re-apply the OTHER ledger and
+# platform .env settings, run create-instance.yml (idempotent).
+# Deploy-source contract: C13 covers the
 # working-tree rsync path; this playbook is the git-branch path (see the
 # consistency register). Make sure the branch is at or above the running
 # schema version before syncing a live instance.
@@ -148,6 +150,17 @@
         mode: "0644"
       register: override
       notify: Restart stack
+
+    # The one .env line this playbook owns: without it a sync could move the
+    # code ahead of the stamp and the instance would report a stale version
+    # until create-instance.yml re-ran (C4). The value still comes from the
+    # ledger, exactly as in create-instance.yml — set app_version there first,
+    # this only propagates it. The restart below picks it up.
+    - name: Sync the version stamp into .env
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/.env"
+        regexp: "^OCTBASE_APP_VERSION="
+        line: "OCTBASE_APP_VERSION={{ client_ledger.app_version | default(octbase_version) }}"
 
     # App code is baked into the images at build time (not bind-mounted).
     # Always rebuild/restart on sync so the instance is guaranteed to run the
