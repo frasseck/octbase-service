@@ -35,7 +35,7 @@ octbase_release_cache: "{{ lookup('env', 'HOME') }}/.cache/octbase-service/octba
 # value selects the code AND labels it, and the two cannot drift apart (C4).
 # Every value used here or in a ledger app_version must exist as a tag in
 # octbase_repo and as a dated release entry in the app repo's CHANGELOG.md.
-octbase_version: "1.0.7"
+octbase_version: "1.0.8"
 
 # SMTP relay for outgoing app mail (invitations, notifications). Leaving the
 # host empty makes the API log mail to stdout — set a real relay before
