@@ -1,0 +1,236 @@
+---
+# Set the Octbase version of an EXISTING client installation: deploy the app
+# repo's v<version> tag and stamp OCTBASE_APP_VERSION to match.
+#
+# The value comes from the ledger (edit app_version there, commit, then run):
+#   ansible-playbook playbooks/set-version.yml -e client=acme
+#
+# An extra-var overrides the ledger for ad-hoc changes (update the ledger
+# afterwards — it must stay the source of truth):
+#   ansible-playbook playbooks/set-version.yml -e client=acme -e app_version=1.0.8
+#
+# This is the counterpart to sync-instance.yml: same update-only contract (no
+# account creation, no secrets, no .env rewrite beyond the version stamp, no
+# data touched), but it deploys a RELEASE TAG rather than a branch tip — the
+# same source create-instance.yml uses, so a client provisioned and a client
+# upgraded end up on identical code. Code and stamp move together, so an
+# instance can never report a version it is not running (C4).
+#
+# Version changes are one-way in practice: a downgrade re-deploys older code
+# against a database the newer code may already have migrated. Check the
+# schema version before pointing a live instance at a lower version.
+- name: Set Octbase version for a client instance
+  hosts: octbase_hosts
+  become: true
+  vars:
+    linux_user: "{{ client_user_prefix }}{{ client }}"
+    home_dir: "/home/{{ linux_user }}"
+    app_dir: "{{ home_dir }}/{{ client_app_subdir }}"
+    fqdn: "{{ client }}.{{ base_domain }}"
+
+  pre_tasks:
+    - name: Load client ledger entry
+      ansible.builtin.include_vars:
+        file: "../ledger/clients/{{ client }}.yml"
+        name: client_ledger
+      register: client_ledger_loaded
+
+    - name: Normalize client ledger variable
+      ansible.builtin.set_fact:
+        client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
+
+    # Precedence matches set-max-users.yml: extra-var, else ledger, else the
+    # platform default in group_vars/all/main.yml.
+    - name: Resolve effective version
+      ansible.builtin.set_fact:
+        effective_version: >-
+          {{ app_version if (app_version is defined)
+             else (client_ledger.app_version | default(octbase_version)) }}
+
+    - name: Validate ledger entry
+      ansible.builtin.assert:
+        that:
+          - client is defined
+          - client_ledger.name == client
+          - client_ledger.status == 'active'
+          - client_ledger.ports.api is defined
+          - effective_version | string is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+        fail_msg: >-
+          Ledger entry for '{{ client | default('?') }}' is missing, not
+          'active', or the resolved version
+          '{{ effective_version | default('?') }}' is not a bare x.y.z (no
+          leading 'v') — run ./ledger/ledger.py validate.
+
+    - name: Scope the play to the client's host
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (client_ledger.host | default(default_client_host))
+
+  tasks:
+    - name: Look up the client account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ linux_user }}"
+
+    - name: Set user session env
+      ansible.builtin.set_fact:
+        user_env:
+          XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['getent_passwd'][linux_user][1] }}"
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_facts['getent_passwd'][linux_user][1] }}/bus"
+
+    # Update-only, as in sync-instance.yml: refuse an instance that was never
+    # provisioned rather than half-creating one.
+    - name: Check the instance is provisioned
+      ansible.builtin.stat:
+        path: "{{ app_dir }}/podman-compose.yml"
+      register: compose_file
+
+    - name: Fail if the instance is not provisioned
+      ansible.builtin.assert:
+        that: compose_file.stat.exists
+        fail_msg: >-
+          {{ app_dir }} has no podman-compose.yml — nothing to version.
+          Provision the instance with create-instance.yml first.
+
+    - name: Resolve the release tag
+      ansible.builtin.set_fact:
+        release_tag: "v{{ effective_version }}"
+
+    # Same guard as create-instance.yml: refuse before touching the instance,
+    # so a typo'd or untagged version fails on the admin machine rather than
+    # halfway through a redeploy.
+    - name: Check the release tag exists in the app repo
+      delegate_to: localhost
+      run_once: true
+      become: false
+      ansible.builtin.command:
+        argv:
+          - git
+          - ls-remote
+          - --exit-code
+          - "{{ octbase_repo }}"
+          - "refs/tags/{{ release_tag }}"
+      register: release_tag_probe
+      changed_when: false
+      failed_when: false
+
+    - name: The requested version must name a real release tag
+      ansible.builtin.assert:
+        that: release_tag_probe.rc == 0
+        fail_msg: >-
+          {{ octbase_repo }} has no tag '{{ release_tag }}', which is what
+          version '{{ effective_version }}' selects for {{ client }}. Tag the
+          release in the app repo (and give it a dated CHANGELOG.md entry —
+          C4), or pick a version that is already tagged.
+
+    # On the ADMIN machine, not the host — the host never talks to GitHub.
+    - name: Fetch the release on the admin machine
+      delegate_to: localhost
+      run_once: true
+      become: false
+      ansible.builtin.git:
+        repo: "{{ octbase_repo }}"
+        dest: "{{ octbase_release_cache }}"
+        version: "{{ release_tag }}"
+        depth: 1
+        force: true
+
+    - name: Sync the release source into the client account
+      ansible.posix.synchronize:
+        src: "{{ octbase_release_cache }}/"
+        dest: "{{ app_dir }}/"
+        archive: true
+        delete: false
+        # See create-instance.yml: with become the synchronize plugin auto-adds
+        # its own --rsync-path=sudo rsync; setting it here prevents a duplicate.
+        rsync_path: "sudo rsync"
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=.env"
+          - "--exclude=pgdata*"
+          - "--exclude=attachments"
+          - "--exclude=.pytest_cache"
+          - "--exclude=node_modules"
+          # Internal development prompts — not part of the product.
+          - "--exclude=/prompts"
+          - "--chown={{ linux_user }}:{{ linux_user }}"
+
+    # Kept in step with create-instance/sync-instance: a base compose change in
+    # the new release may need a matching override, and the override is not in
+    # the app repo (rsync never overwrites it).
+    - name: Refresh the production compose override
+      ansible.builtin.copy:
+        src: podman-compose.client.yml
+        dest: "{{ app_dir }}/podman-compose.client.yml"
+        owner: "{{ linux_user }}"
+        group: "{{ linux_user }}"
+        mode: "0644"
+
+    - name: Stamp OCTBASE_APP_VERSION in .env
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/.env"
+        regexp: "^OCTBASE_APP_VERSION="
+        line: "OCTBASE_APP_VERSION={{ effective_version }}"
+
+    # App code is baked into the images at build time (not bind-mounted), so
+    # the rebuild is what actually moves the instance to the new version.
+    - name: Rebuild container images from the release source
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.command:
+        cmd: podman-compose -f podman-compose.yml -f podman-compose.client.yml build
+        chdir: "{{ app_dir }}"
+      changed_when: true
+      timeout: 3600
+
+    - name: Restart the stack on rebuilt images
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.systemd_service:
+        name: octbase
+        scope: user
+        daemon_reload: true
+        state: restarted
+
+    - name: Wait for API health
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ client_ledger.ports.api }}/health"
+        status_code: 200
+      register: health
+      retries: 30
+      delay: 5
+      until: health.status == 200
+
+    # Don't trust the .env edit or the restart alone — ask the API what version
+    # it actually reports. This is the whole point of the playbook: the stamp
+    # and the running code must agree (C4).
+    - name: Read the version the running API reports
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ client_ledger.ports.api }}/api/v1/version"
+        return_content: true
+      register: reported_version
+
+    - name: The running instance must report the requested version
+      ansible.builtin.assert:
+        that: (reported_version.json.version | default('')) == effective_version
+        fail_msg: >-
+          {{ fqdn }} was redeployed at {{ release_tag }} but /api/v1/version
+          reports '{{ reported_version.json.version | default('(absent)') }}'.
+          The stamp and the running code disagree — investigate before
+          treating this client as upgraded.
+
+    - name: Prune unused Podman images
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.command:
+        cmd: podman image prune -f
+      changed_when: true
+
+    - name: Result
+      ansible.builtin.debug:
+        msg: >-
+          {{ fqdn }}: Octbase {{ effective_version }} ({{ release_tag }})
+          deployed, stamped and confirmed live on
+          127.0.0.1:{{ client_ledger.ports.api }}.
+          {{ 'You overrode the ledger with -e app_version — update
+             ledger/clients/' ~ client ~ '.yml to ' ~ effective_version ~ '
+             now and commit.' if app_version is defined else '' }}

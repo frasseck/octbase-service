@@ -10,9 +10,10 @@ base_domain: ocete.ch
 default_client_host: prod
 
 # Path ON THE ADMIN MACHINE to a checkout of the app repo
-# (frasseck/octbase.git) at the release you want to deploy. The create
-# playbook rsyncs this working tree AS-IS to the client account — make sure
-# it is on the released commit with a clean `git status` before rolling out.
+# (frasseck/octbase.git). No longer the client deploy source — create-instance
+# now deploys the release tag the ledger's app_version selects (below), so a
+# dev checkout's branch and uncommitted edits can no longer reach a client.
+# Still used by install-monitoring.yml for octbase-operations/check-health.sh.
 octbase_src: "{{ lookup('env', 'HOME') }}/dev.ocete.ch"
 
 # The app repo, and the git-based deploy source used by sync-instance.yml
@@ -24,8 +25,17 @@ octbase_repo: "git@github.com:frasseck/octbase.git"
 octbase_branch: main
 octbase_git_cache: "{{ lookup('env', 'HOME') }}/.cache/octbase-service/octbase"
 
-# Default OCTBASE_APP_VERSION stamp when a ledger entry has no app_version.
-# Keep in step with the latest release entry in the app repo's CHANGELOG.md.
+# Clone ON THE ADMIN MACHINE that create-instance.yml deploys clients from: the
+# release tag app_version selects, checked out fresh per run. Kept separate from
+# octbase_git_cache because that one is a single-branch clone for
+# sync-instance's branch deploys, and a single-branch clone cannot fetch tags.
+octbase_release_cache: "{{ lookup('env', 'HOME') }}/.cache/octbase-service/octbase-releases"
+
+# Default OCTBASE_APP_VERSION when a ledger entry has no app_version. This is
+# not just a stamp: create-instance deploys the app repo tag v<version>, so the
+# value selects the code AND labels it, and the two cannot drift apart (C4).
+# Every value used here or in a ledger app_version must exist as a tag in
+# octbase_repo and as a dated release entry in the app repo's CHANGELOG.md.
 octbase_version: "1.0.7"
 
 # SMTP relay for outgoing app mail (invitations, notifications). Leaving the

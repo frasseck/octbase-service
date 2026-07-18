@@ -94,7 +94,7 @@ driven by the same per-host client registry the monitor uses
 | Action | Tool |
 |---|---|
 | Onboard | `ledger.py new` → `create-instance.yml` |
-| Reconfigure (edition/seats/version/resources/quota) | edit ledger → `create-instance.yml` (or `set-resources.yml` / `set-max-users.yml` for a single knob) |
+| Reconfigure (edition/seats/version/resources/quota) | edit ledger → `create-instance.yml` (or `set-resources.yml` / `set-max-users.yml` / `set-version.yml` for a single knob) |
 | Code update | `sync-instance.yml` (branch) or `create-instance.yml` (working tree) |
 | Suspend / resume | `suspend-instance.yml` (status: suspended) / set `status: active` + `create-instance.yml` |
 | Move to another **account/domain, same host** | `migrate-instance.yml` |

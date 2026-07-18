@@ -207,6 +207,11 @@
 # slice caps, quota, source sync, fresh .env, build, unit, health gate,
 # monitor registration, edge snippet.
 - ansible.builtin.import_playbook: create-instance.yml
+  vars:
+    # Phase 3 drops the target database and restores the source dump over it,
+    # bringing the real users. An admin bootstrapped here would be wiped by
+    # that restore, and its printed password would never have worked.
+    skip_admin_bootstrap: true
 
 # ── Phase 3: restore the data on the target ─────────────────────────────────
 - name: Move instance to another host — phase 3 of 3, restore data

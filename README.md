@@ -61,6 +61,7 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `playbooks/suspend-instance.yml` | Stop a `status: suspended` client non-destructively; domain answers 503 |
 | `playbooks/set-max-users.yml` | Set `OCTBASE_MAX_USERS` for a client and restart its stack |
 | `playbooks/set-resources.yml` | Apply a client's memory/CPU/tasks caps + disk quota, no redeploy |
+| `playbooks/set-version.yml` | Deploy a client's `app_version` release tag, stamp it and verify via `/api/v1/version` |
 | `playbooks/install-monitoring.yml` | Install the fleet monitor (script + systemd timer) on every host |
 | `playbooks/install-backup.yml` | Install the nightly fleet backup (script + systemd timer) on every host |
 | `playbooks/templates/` | `.env`, systemd user unit + slice drop-in, edge Caddy vhost templates |
@@ -87,8 +88,11 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 - The `bcrypt` Python module (`apt install python3-bcrypt`), to hash a client's
   initial admin password. Needed on a **first** deploy only; `create-instance.yml`
   fails with that instruction if it is missing.
-- A checkout of the app repo (`frasseck/octbase.git`) at the release you want
-  to ship. Its path is `octbase_src` in `inventory/group_vars/all/main.yml`.
+- SSH access to the app repo (`frasseck/octbase.git`): `create-instance.yml`
+  clones the release tag a client's `app_version` names into a cache on this
+  machine (`octbase_release_cache`). The production host never talks to GitHub.
+- A checkout of the app repo at `octbase_src` — no longer the client deploy
+  source, only where `install-monitoring.yml` reads `check-health.sh` from.
 - SSH root access to the production host (or a sudo user — then set
   `ansible_user` accordingly and add `rsync_path: sudo rsync` to the sync task).
 
@@ -111,7 +115,7 @@ jira_import: true          # bookable add-on; only honored for business
 max_users: 25              # → OCTBASE_MAX_USERS
 registered: 2026-07-10
 status: active             # active | suspended | removed
-app_version: "1.0.1"       # → OCTBASE_APP_VERSION stamp
+app_version: "1.0.1"       # deploys app repo tag v1.0.1 AND stamps it
 host: prod                 # inventory host the instance runs on
 disk_quota_gb: 10          # account disk quota (enforced where fs allows, always monitored)
 resources:                 # optional — account caps (systemd user slice);
@@ -206,12 +210,27 @@ for **every** active client:
 ansible-playbook playbooks/create-instance.yml -e client=acme
 ```
 
+### Which version an instance runs
+
+`create-instance.yml` deploys the app repo **tag** that the ledger's
+`app_version` names — `app_version: "1.0.8"` deploys tag `v1.0.8` — and stamps
+`OCTBASE_APP_VERSION` with the same value. The version therefore *selects* the
+code rather than just labelling it, so a client cannot run code that disagrees
+with its own stamp (C4), and nothing about the admin machine's checkout can
+reach a client. `octbase_version` in `group_vars` is the default for ledger
+entries that set no `app_version`.
+
+To move a client to a new release: tag it in the app repo (with a dated
+`CHANGELOG.md` entry), set `app_version` in the client's ledger file, commit,
+and re-run `create-instance.yml`. It refuses up front if the tag does not
+exist, naming the tag it wanted.
+
 ### Sync an instance to a branch (main)
 
-`create-instance.yml` deploys whatever `octbase_src` (a working tree on the
-admin machine) currently holds. To instead pull an instance's code straight
-from a branch of the app repo — the way the demo was fed by `git pull` before
-it became a managed client — use `sync-instance.yml`:
+To run an instance's code straight from a **branch** instead of a release tag —
+the way the demo was fed by `git pull` before it became a managed client — use
+`sync-instance.yml`. This is the unreleased-code path: use it for the demo and
+for testing, not to put a client on a release.
 
 ```bash
 # sync the demo (/home/oct-demo/octbase) to origin/main, rebuild + restart
@@ -267,6 +286,35 @@ containers are recreated so the env change takes effect) and re-checks
 > `OCTBASE_MAX_USER_STORAGE_MB` (512 MB stored per user); edit a client's
 > `.env` and restart for one-off deals — they are deliberately not
 > ledger-managed.
+
+### Set the Octbase version
+
+The version is ledger-managed like the seat count (edit `app_version`, commit,
+run). It is not just a stamp: the value selects the app repo tag `v<version>`
+that gets deployed, so code and stamp cannot drift apart (C4).
+
+```bash
+ansible-playbook playbooks/set-version.yml -e client=acme
+```
+
+For an ad-hoc override (extra-vars beat the ledger), pass it explicitly —
+and update the ledger afterwards so it stays the source of truth:
+
+```bash
+ansible-playbook playbooks/set-version.yml -e client=acme -e app_version=1.0.8
+```
+
+The playbook refuses before touching the instance if the app repo has no
+`v<version>` tag, then deploys that tag, stamps `OCTBASE_APP_VERSION`,
+rebuilds the images, restarts, waits for `/health`, and finally reads
+`/api/v1/version` back — failing if the running instance reports anything
+other than the requested version.
+
+> Versions move forward in practice. A downgrade re-deploys older code against
+> a database the newer code may already have migrated; check the schema
+> version before pointing a live instance at a lower version. Use
+> `create-instance.yml` (idempotent) instead when you also want the other
+> ledger- and platform-managed `.env` settings re-applied.
 
 ### Give or take resources (memory / CPU / tasks / disk)
 
