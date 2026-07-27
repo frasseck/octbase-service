@@ -26,7 +26,7 @@ playbooks locally to "help" — that is an operator decision.
 ## Commands
 
 ```bash
-./ledger/ledger.py new <name> --display "…" --edition business [--jira-import] \
+./ledger/ledger.py new <name> --display "…" --edition business [--no-jira-import] \
     --max-users N --contact a@b.c        # scaffold a client file, allocate ports
 ./ledger/ledger.py list                  # client table
 ./ledger/ledger.py validate              # names, editions, add-on rules, port collisions

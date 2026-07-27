@@ -105,7 +105,12 @@ def cmd_new(args):
     path = CLIENTS_DIR / f"{args.name}.yml"
     if path.exists():
         sys.exit(f"{path} already exists")
-    if args.jira_import and args.edition == "team":
+    # The add-on is booked by default; team can never have it, so the default
+    # backs off there and only an explicit --jira-import is an error.
+    jira_import = args.jira_import
+    if jira_import is None:
+        jira_import = args.edition != "team"
+    elif jira_import and args.edition == "team":
         sys.exit("the jira_import add-on cannot be booked for the team edition")
     host = args.host or default_host()
     known_hosts = inventory_hosts()
@@ -119,7 +124,7 @@ def cmd_new(args):
         "display_name": args.display or args.name,
         "contact": args.contact or "",
         "edition": args.edition,
-        "jira_import": bool(args.jira_import),
+        "jira_import": jira_import,
         "max_users": args.max_users,
         "registered": datetime.date.today().isoformat(),
         "status": "active",
@@ -187,10 +192,10 @@ def cmd_validate(_args):
             errors.append(f"{where}: status must be one of {sorted(STATUSES)}")
         if not isinstance(c.get("max_users"), int) or c["max_users"] < 1:
             errors.append(f"{where}: max_users must be a positive integer")
+        if not isinstance(c.get("jira_import"), bool):
+            errors.append(f"{where}: jira_import must be true or false")
         if c.get("jira_import") and c.get("edition") == "team":
             errors.append(f"{where}: the jira_import add-on cannot be booked for team")
-        if c.get("jira_import") and c.get("edition") == "enterprise":
-            warnings.append(f"{where}: jira_import is redundant — enterprise includes it")
         if "monitor_edge_probe" in c and not isinstance(c["monitor_edge_probe"], bool):
             errors.append(f"{where}: monitor_edge_probe must be true or false")
         host = c.get("host", dflt_host)
@@ -255,8 +260,10 @@ def main():
     p_new.add_argument("--display", help="display name (company)")
     p_new.add_argument("--contact", help="contact email")
     p_new.add_argument("--edition", choices=sorted(EDITIONS), required=True)
-    p_new.add_argument("--jira-import", action="store_true",
-                       help="book the Jira-CSV-import add-on (business only)")
+    p_new.add_argument("--jira-import", action=argparse.BooleanOptionalAction,
+                       default=None,
+                       help="book the Jira-CSV-import add-on (default: booked, "
+                            "except for the team edition, which can never have it)")
     p_new.add_argument("--max-users", type=int, default=25)
     p_new.add_argument("--app-version", default=None)
     p_new.add_argument("--host", default=None,

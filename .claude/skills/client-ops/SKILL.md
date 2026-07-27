@@ -32,7 +32,7 @@ update it.
 
 ```bash
 ./ledger/ledger.py new acme --display "ACME GmbH" --edition business \
-    --jira-import --max-users 25 --contact it@acme.example
+    --max-users 25 --contact it@acme.example
 ./ledger/ledger.py validate
 git add ledger/clients/acme.yml && git commit -m "ledger: onboard acme"
 # admin machine:
@@ -42,8 +42,9 @@ ansible-playbook playbooks/create-instance.yml -e client=acme
 Constraints encoded in `ledger.py` (don't work around them): name =
 `^[a-z][a-z0-9-]{1,27}$`, not in the reserved set (`www dev mail api
 octbase admin` — `demo` is a ledger-managed instance since 2026-07-11);
-`jira_import` only bookable on `business` (included in enterprise, never on
-team); ports auto-allocated from 8110 in blocks of 10.
+`jira_import` booked by default (`--no-jira-import` to opt out), only
+bookable on `business` (included in enterprise, never on team — there the
+scaffold defaults it to false); ports auto-allocated from 8110 in blocks of 10.
 
 Then two **manual** steps the playbook prints: DNS A/AAAA record for
 `acme.ocete.ch`, and including the generated edge snippet

@@ -2,10 +2,11 @@ name: educaswiss
 display_name: EducaSwiss
 contact: ''
 edition: business
-jira_import: false
+jira_import: true
 max_users: 10
 registered: '2026-07-16'
 status: active
+app_version: '1.0.10'
 host: prod
 disk_quota_gb: 10
 # DNS + edge snippet still pending — remove once educaswiss.ocete.ch is live.
@@ -14,4 +15,7 @@ ports:
   frontend: 8140
   api: 8141
   postgres: 8142
-notes: ''
+notes: >-
+  Not provisioned yet as of 2026-07-27: no oct-educaswiss account on the host
+  and no DNS/edge for educaswiss.ocete.ch despite status active; contact email
+  still missing.

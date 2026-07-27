@@ -6,25 +6,18 @@
 name: demo
 display_name: Public demo (demo.ocete.ch)
 contact: lars@beyags.com
-
-# Showcases the full product; the Jira import is included in enterprise.
 edition: enterprise
-jira_import: false
+jira_import: true
 max_users: 25
-
-registered: 2026-07-11
+registered: '2026-07-11'
 status: active
-
-app_version: "1.0.9"
-
+app_version: '1.0.10'
 host: prod
 disk_quota_gb: 20
-
 ports:
   frontend: 8110
   api: 8111
   postgres: 8112
-
 notes: >-
   Platform demo instance. Migrated from /home/claude/demo.ocete.ch into the
   oct-demo account on 2026-07-11 via migrate-instance.yml (legacy ports

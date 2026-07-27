@@ -6,9 +6,9 @@ jira_import: false
 max_users: 10
 registered: '2026-07-16'
 status: active
+app_version: '1.0.10'
 host: prod
 disk_quota_gb: 10
-monitor_edge_probe: false
 ports:
   frontend: 8130
   api: 8131

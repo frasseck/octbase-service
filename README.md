@@ -111,7 +111,7 @@ name: acme                 # → acme.ocete.ch, Linux user oct-acme
 display_name: ACME GmbH
 contact: it@acme.example
 edition: business          # team | business | enterprise
-jira_import: true          # bookable add-on; only honored for business
+jira_import: true          # add-on, booked by default; only honored for business
 max_users: 25              # → OCTBASE_MAX_USERS
 registered: 2026-07-10
 status: active             # active | suspended | removed
@@ -132,7 +132,7 @@ Ledger CLI (run from the repo root):
 
 ```bash
 ./ledger/ledger.py new acme --display "ACME GmbH" --edition business \
-    --jira-import --max-users 25 --contact it@acme.example   # scaffolds the file, allocates ports
+    --max-users 25 --contact it@acme.example   # scaffolds the file, allocates ports
 ./ledger/ledger.py list        # table of all clients
 ./ledger/ledger.py validate    # names, editions, port collisions, add-on rules
 ./ledger/ledger.py next-ports  # next free port triplet
@@ -147,7 +147,7 @@ client's `.env` on the server (mode 0600).
 ### Onboard a new client
 
 ```bash
-./ledger/ledger.py new acme --display "ACME GmbH" --edition business --jira-import \
+./ledger/ledger.py new acme --display "ACME GmbH" --edition business \
     --max-users 25 --contact it@acme.example
 ./ledger/ledger.py validate
 git add ledger/clients/acme.yml && git commit -m "ledger: onboard acme"

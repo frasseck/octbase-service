@@ -12,9 +12,10 @@ contact: it@acme.example
 
 # Booked product: team | business | enterprise (→ OCTBASE_EDITION).
 edition: business
-# Jira-CSV-import add-on (→ OCTBASE_OPTION_JIRA_IMPORT). Only honored for
+# Jira-CSV-import add-on (→ OCTBASE_OPTION_JIRA_IMPORT). Booked by default
+# (`ledger.py new` sets it true unless --no-jira-import). Only honored for
 # the business edition: enterprise always includes the import, team can
-# never activate it.
+# never activate it (there the scaffold defaults to false).
 jira_import: true
 # Licensed seats (→ OCTBASE_MAX_USERS).
 max_users: 25
@@ -27,7 +28,7 @@ status: active
 
 # App version stamped into the deployment (→ OCTBASE_APP_VERSION).
 # Falls back to `octbase_version` from group_vars when omitted.
-app_version: "1.0.1"
+app_version: "1.0.10"
 
 # Inventory host (inventory/hosts.yml) this instance runs on. Every
 # per-client playbook scopes itself to this host. Falls back to
