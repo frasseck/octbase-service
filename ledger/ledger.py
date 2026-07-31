@@ -25,7 +25,11 @@ except ImportError:
 
 CLIENTS_DIR = Path(__file__).resolve().parent / "clients"
 INVENTORY_FILE = Path(__file__).resolve().parent.parent / "inventory" / "hosts.yml"
-GROUP_VARS_FILE = Path(__file__).resolve().parent.parent / "inventory" / "group_vars" / "all.yml"
+# group_vars/all is a DIRECTORY since 2026-07-17 (main.yml + the vault) — this
+# pointed at the pre-split all.yml until 2026-07-31, so default_client_host was
+# never read and every `new` silently took the alphabetically first host.
+GROUP_VARS_FILE = (Path(__file__).resolve().parent.parent
+                   / "inventory" / "group_vars" / "all" / "main.yml")
 
 # Max 28 chars: the Linux account is "oct-<name>" and useradd caps
 # usernames at 32 characters.
@@ -64,16 +68,27 @@ def inventory_hosts():
 
 
 def default_host():
-    """default_client_host from group_vars (fallback: sole inventory host)."""
+    """default_client_host from group_vars (fallback: first inventory host).
+
+    The fallback is a broken-repo path, not a normal one: an unreadable
+    group_vars is what let the stale path above go unnoticed for two weeks.
+    Say so instead of picking a host quietly — placing a client on the wrong
+    server is not something to discover after `create-instance.yml` ran.
+    """
     try:
         with open(GROUP_VARS_FILE) as fh:
             gv = yaml.safe_load(fh) or {}
         if gv.get("default_client_host"):
             return str(gv["default_client_host"])
-    except OSError:
-        pass
+        reason = f"no default_client_host in {GROUP_VARS_FILE.name}"
+    except OSError as e:
+        reason = f"cannot read {GROUP_VARS_FILE}: {e.strerror}"
     hosts = sorted(inventory_hosts())
-    return hosts[0] if hosts else "prod"
+    fallback = hosts[0] if hosts else "prod"
+    print(f"warning: {reason} — defaulting to host '{fallback}'"
+          f"{' (first of ' + str(len(hosts)) + ' in the inventory)' if len(hosts) > 1 else ''}; "
+          "pass --host to choose explicitly", file=sys.stderr)
+    return fallback
 
 
 def load_clients():
