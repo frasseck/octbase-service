@@ -50,6 +50,7 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 |---|---|
 | `ledger/clients/*.yml` | **The client ledger** — one file per client, committed to git |
 | `ledger/ledger.py` | Ledger CLI: `new`, `list`, `validate`, `next-ports` |
+| `scripts/check-version-drift.py` | Read-only: every version stamp vs the app repo's tags + changelog (C4/C13) |
 | `inventory/hosts.yml` | The production host(s) Ansible connects to |
 | `inventory/group_vars/all/main.yml` | Platform-wide defaults (domain, SMTP relay, source path, …) |
 | `inventory/group_vars/all/vault.yml` | Ansible Vault: the SMTP relay password (`vault.yml.sample` documents it) |
@@ -224,6 +225,18 @@ To move a client to a new release: tag it in the app repo (with a dated
 `CHANGELOG.md` entry), set `app_version` in the client's ledger file, commit,
 and re-run `create-instance.yml`. It refuses up front if the tag does not
 exist, naming the tag it wanted.
+
+To see where every stamp stands — the fleet default plus each client — run:
+
+```bash
+scripts/check-version-drift.py     # read-only; contacts no client host
+```
+
+It prints each stamp's distance from the newest app repo tag and checks the
+tag and dated changelog entry exist. **Trailing the newest release is a `WARN`,
+not an error** (exit status stays 0): pinning behind is a deliberate choice,
+and the bump is the rollout decision itself. `FAIL` means a stamp names a
+version that has no tag, is ahead of every tag, or has no changelog entry.
 
 ### Sync an instance to a branch (main)
 

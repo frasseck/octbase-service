@@ -31,11 +31,13 @@ grep -oE '^OCTBASE_[A-Z_]+' playbooks/templates/env.j2 | sort -u \
 grep -oE 'OCTBASE_[A-Z_]+' playbooks/files/podman-compose.client.yml | sort -u \
   | while read k; do grep -qE "^#?$k=" $OCTBASE_SRC/.env.example || echo "MISSING in .env.example: $k"; done
 
-# C4 — every stamped version has a dated changelog entry
+# C4/C13 — this repo's stamps: tagged, changelogged, and how far behind the
+# newest app repo tag. WARN (trailing) is a deliberate pin, FAIL is drift.
+scripts/check-version-drift.py
+
+# C4 — the resident dev/demo stacks' own stamps (not this repo's; the script
+# cannot see them). Compare against what /api/v1/health actually reports.
 grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev ~/demo.ocete.ch/.env
-grep -m1 '^## v' $OCTBASE_SRC/CHANGELOG.md
-grep '^octbase_version' inventory/group_vars/all/main.yml
-grep -h 'app_version' ledger/clients/*.yml 2>/dev/null
 
 # C8 — live host ports vs ledger.py RESERVED_PORTS
 podman ps --format '{{.Ports}}' | grep -oE '[0-9.]+:[0-9]+' | sort -u

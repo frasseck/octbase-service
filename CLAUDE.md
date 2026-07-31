@@ -32,6 +32,10 @@ playbooks locally to "help" — that is an operator decision.
 ./ledger/ledger.py validate              # names, editions, add-on rules, port collisions
 ./ledger/ledger.py next-ports            # next free frontend/api/postgres triplet
 
+# Read-only: every version stamp (octbase_version + each client's app_version)
+# vs the app repo's tags and CHANGELOG (C4/C13). WARN = pinned behind, FAIL = broken.
+scripts/check-version-drift.py
+
 # Syntax-check YAML and Jinja2 without Ansible (see the playbook-check skill)
 python3 -c "import yaml,glob; [yaml.safe_load_all(open(f).read()) and print('ok', f) for f in glob.glob('playbooks/*.yml')]"
 

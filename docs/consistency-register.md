@@ -557,10 +557,37 @@ one of the version stamps doesn't follow — and every one was found by review
 rather than by anything failing. D24 removed the sharpest edge structurally
 (an untagged version is now a hard assert, not silent drift), and
 `set-version.yml` reads `/api/v1/version` back so a *deploy* can no longer
-lie. What stays unguarded is the gap between a cut release and the pinned
-version: nothing detects that `octbase_version` has fallen behind the newest
-tag, because trailing is legitimate. Check 6 of the review checklist below is
-the only thing that catches it, and it is a human step.
+lie. What stayed unguarded was the gap between a cut release and the pinned
+version — nothing detected that `octbase_version` had fallen behind the newest
+tag, because trailing is legitimate. That gap is now measured: see below.
+
+### C4/C13 gained a check — `scripts/check-version-drift.py` (2026-07-31)
+
+The sixth recurrence is what motivated it (OCT `5851e460`). The script reads
+the four stamps this repo owns — `octbase_version` plus one `app_version` per
+non-`removed` ledger client — and compares each against the app repo's tags,
+taken from `git ls-remote` on `octbase_repo` (the deploy source, C13) with a
+local checkout as fallback, plus `CHANGELOG.md` for the dated entry (C4):
+
+- **OK** — the stamp is on the newest tag.
+- **WARN** — it trails by N releases. Deliberately *not* a failure: pinning
+  behind a release is a legitimate operator choice (that is exactly what §2.7
+  above describes), and an error people learn to ignore stops being an error.
+  Exit status stays 0.
+- **FAIL** — the stamp names a version with no tag, is ahead of every tag
+  (D10's original shape: a stamp naming code that does not exist), or has a
+  tag but no dated `CHANGELOG.md` entry. Exit status 1.
+
+It writes nothing and contacts no client host, so it is safe to run from this
+checkout. First run, 2026-07-31: four stamps at `1.0.10`, newest tag `v1.1.0`,
+all four reported `WARN — 1 release behind` — the state §2.7 argues is correct
+but which nothing had said out loud before. It replaces the manual C4 block in
+the §3 checklist; step 6 of the `release-readiness` skill invokes it.
+
+What it still does **not** cover: the `OCTBASE_APP_VERSION` in the resident
+dev/demo `.env` files (unreadable from this account, and not this repo's
+stamps) — those stay the checklist's live-instance step, verified against
+`/api/v1/health`.
 
 ## 3. Review checklist (run per release, ~10 minutes)
 
@@ -570,10 +597,11 @@ the only thing that catches it, and it is a human step.
 grep -oE '^OCTBASE_[A-Z_]+' playbooks/templates/env.j2 | sort -u \
   | while read k; do grep -qE "^#?$k=" $OCTBASE_SRC/.env.example || echo "MISSING in .env.example: $k"; done
 
-# C4 — stamped versions have a changelog entry
+# C4/C13 — every stamp in this repo: tagged, changelogged, and how far behind
+scripts/check-version-drift.py            # WARN = pinned behind, FAIL = broken stamp
+
+# C4 — the resident stacks' own stamps (not this repo's; check against /health)
 grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev ~/demo.ocete.ch/.env
-grep -m1 '^## v' $OCTBASE_SRC/CHANGELOG.md
-grep '^octbase_version' inventory/group_vars/all/main.yml
 
 # C5 — spec/README paths that no longer exist in code (reverse parity, manual)
 grep -oE '/api/v1/[a-z0-9/{}._-]+' $OCTBASE_SRC/api/openapi.yaml | sort -u \
