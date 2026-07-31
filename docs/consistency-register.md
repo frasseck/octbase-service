@@ -239,7 +239,7 @@ demo the same day; verified live: `/health` reports `1.0.4`, migration 27).
 C1 (env surface) and C8 (live ports vs `RESERVED_PORTS`) clean;
 `octbase_version` bumped `1.0.3` → `1.0.4` (C4). One new finding:
 
-### D10 — Demo `.env` stamps the unreleased 1.1.0 (C4) — **open**
+### D10 — Demo `.env` stamps the unreleased 1.1.0 (C4) — **closed 2026-07-31, overtaken (§2.7)**
 `~/demo.ocete.ch/.env` was edited to `OCTBASE_APP_VERSION=1.1.0` *after* the
 v1.0.4 restart (the running stack was started with — and still reports —
 `1.0.4`), so the mis-stamp only bites at the **next** demo restart, which
@@ -252,6 +252,20 @@ Also noted, no defect: `octbase_src` (`~/dev.ocete.ch`) is currently a dirty
 `release_v15` tree — fine between rollouts, but it must be on the released
 commit with a clean tree (C13) before the pending demo migration or any
 client rollout runs.
+
+**Closed 2026-07-31 — the file this defect lives in no longer exists.** The
+demo was migrated out of the shared account into the client model (`oct-demo`,
+ledger `demo.yml`), so there is no `~/demo.ocete.ch/.env` to correct; the
+prescribed one-line fix has nothing to apply to. The C4 exposure is gone on
+its own terms too: live demo answers `/api/v1/health` with `1.0.10`, which the
+ledger pins and which carries a dated `## v1.0.10 — 2026-07-27` entry. Note
+the closure is *incidental* — the migration overtook the defect rather than
+addressing it, and between 2026-07-11 and the migration a demo restart would
+have done exactly what this entry predicted. The dirty-`octbase_src` note is
+also defused rather than fixed: `~/dev.ocete.ch` is still a dirty tree (on
+`release_v25`), but since D24 the client path selects code by tag and
+`octbase_src` only feeds `install-monitoring.yml`, so a rollout can no longer
+pick up whatever that checkout happens to hold.
 
 ## 2.3 Fleet update 2026-07-12 (multi-host, resources, quotas, fleet backup)
 
@@ -417,7 +431,7 @@ rather than a hand-edit per client. Per-client state:
 **Not yet verified against a live run** — Ansible cannot execute from the
 production checkout; the task is syntax-checked only.
 
-### D23 — v19 merged to main without a changelog release (C4) — **open**
+### D23 — v19 merged to main without a changelog release (C4) — **fixed 2026-07-31 (§2.7)**
 `main` carries v19 (including the `/m/metrics` exposure fix) but its
 CHANGELOG top section is still `## Unreleased`; the newest dated entry is
 `v1.0.7 — 2026-07-14`. `octbase_version` therefore stays at 1.0.7 and no
@@ -426,6 +440,13 @@ stamped `OCTBASE_APP_VERSION=1.0.7` while running post-1.0.7 code. Same
 pattern as D3 and D10. **Fix:** cut the release in the app repo (the
 `release` skill renames `Unreleased` to a dated entry), then bump
 `octbase_version` here and re-run `create-instance.yml` per client.
+
+**Fixed 2026-07-31**, by the prescribed route, four releases later: v19's
+scope was cut as `## v1.0.8 — 2026-07-18` and tagged `v1.0.8`, and the
+CHANGELOG has carried a dated, tagged entry per release since
+(`v1.0.9`/`v1.0.10`/`v1.1.0`). `octbase_version` is `1.0.10` and every live
+instance reports `1.0.10`, so the pinned version once again describes the code
+it deploys. Verification in §2.7.
 
 ### D24 — `create-instance.yml` shipped whatever the admin's checkout held (C13) — **fixed 2026-07-17, structurally**
 Hit for real on the first `beyags` onboarding: the play rsynced `octbase_src`
@@ -495,6 +516,51 @@ live API rather than assumed from a file edit.
 
 **Not yet verified against a live run** — Ansible cannot execute from the
 production checkout; syntax- and Jinja-checked only, as with D22.
+
+## 2.7 Version stamp reconciliation 2026-07-31 (C4, whole surface)
+
+Closes the post-1.0.8 stamp drift found by the first `release-readiness` dry
+run on 2026-07-18 (checks 6+7). That finding listed three defects, all now
+fixed — the repo edits landed in commit `96c8a9e`, and this pass is the
+verification they were never given:
+
+| Found 2026-07-18 | State 2026-07-31 |
+|---|---|
+| `octbase_version: "1.0.7"` in `inventory/group_vars/all/main.yml` — a new instance or sync would ship the *old* version | `1.0.10` |
+| `ledger/clients/demo.yml` pinned `app_version: "1.0.7"` while live demo reported `1.0.8` | `1.0.10`, matching live |
+| `ledger/clients/beyags.yml` had **no** `app_version` key, silently falling back to the stale `octbase_version` | `app_version: '1.0.10'` present |
+
+**Verified, not assumed.** `/api/v1/health` on all three live instances
+answers `1.0.10` (dev, demo, beyags — dev included, which had lagged at
+`1.0.8` on a stale stamp in its own `.env`). `1.0.10` carries a dated
+`## v1.0.10 — 2026-07-27` entry and a `v1.0.10` tag (`186ebaf`), so C4 and
+C13 both hold. The version surface in this repo is exactly four values —
+`octbase_version` plus one `app_version` per client — and all four read
+`1.0.10`; a grep for version literals across `*.yml`/`*.j2`/`*.py` turns up
+nothing else but historical prose in comments. `./ledger/ledger.py validate`
+is clean (3 clients).
+
+**Pinned version deliberately trails the newest release.** `v1.1.0` is tagged
+(`1a50189`) with a dated `## v1.1.0 — 2026-07-31` entry, so it *would* satisfy
+C4 — but `octbase_version` and every ledger `app_version` stay at `1.0.10` on
+purpose. Bumping them is not a bookkeeping correction: the ledger is the
+**desired** state that `set-version.yml` and `create-instance.yml` deploy from
+("edit `app_version` there, commit, then run"), so a bump is the rollout
+decision itself, and it is the operator's to make. That step is tracked as the
+1.1.0 re-cut's step 7 and needs the admin machine regardless. Until it runs,
+repo and fleet agree at 1.0.10 — consistent, just not current, the same state
+§2.6 described for 1.0.7.
+
+**Pattern worth naming:** this is the sixth C4 stamp drift (D3, D10, D18, D23,
+D25, and this one). Every instance has the same shape — a release moves and
+one of the version stamps doesn't follow — and every one was found by review
+rather than by anything failing. D24 removed the sharpest edge structurally
+(an untagged version is now a hard assert, not silent drift), and
+`set-version.yml` reads `/api/v1/version` back so a *deploy* can no longer
+lie. What stays unguarded is the gap between a cut release and the pinned
+version: nothing detects that `octbase_version` has fallen behind the newest
+tag, because trailing is legitimate. Check 6 of the review checklist below is
+the only thing that catches it, and it is a human step.
 
 ## 3. Review checklist (run per release, ~10 minutes)
 
