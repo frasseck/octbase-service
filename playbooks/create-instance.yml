@@ -203,7 +203,11 @@
         src: "{{ octbase_release_cache }}/"
         dest: "{{ app_dir }}/"
         archive: true
-        delete: false
+        # Authoritative, not additive — see set-version.yml. A fresh provision has
+        # nothing to delete, but the migrate playbooks import this play to re-lay
+        # source over an existing app_dir, where an additive sync would keep files
+        # from whatever ref was there before.
+        delete: true
         # The synchronize action plugin auto-adds a --rsync-path=sudo rsync
         # itself whenever `become` is set and this parameter is empty (root
         # is otherwise unwritable/unchownable to a non-root ansible_user).
@@ -220,14 +224,20 @@
           - "--exclude=node_modules"
           # Internal development prompts — not part of the product.
           - "--exclude=/prompts"
+          # Not in the app repo — a later task lays it down. Excluding it keeps
+          # --delete from removing it and leaving a window with no override.
+          - "--exclude=/podman-compose.client.yml"
           - "--chown={{ linux_user }}:{{ linux_user }}"
       notify: Restart stack
       when: octbase_src_remote is not defined
 
     - name: Sync application source from source checkout on target host
       ansible.builtin.command:
+        # --delete for the same reason as the release-cache path above: this is
+        # the host-to-host path the migrate playbooks use, and it re-lays source
+        # over a directory that may already hold a different ref's files.
         cmd: >-
-          rsync -a
+          rsync -a --delete
           --exclude=.git
           --exclude=.env
           --exclude=pgdata*
@@ -235,6 +245,7 @@
           --exclude=.pytest_cache
           --exclude=node_modules
           --exclude=/prompts
+          --exclude=/podman-compose.client.yml
           --chown={{ linux_user }}:{{ linux_user }}
           {{ octbase_src_remote }}/
           {{ app_dir }}/
