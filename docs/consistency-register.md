@@ -589,6 +589,99 @@ dev/demo `.env` files (unreadable from this account, and not this repo's
 stamps) — those stay the checklist's live-instance step, verified against
 `/api/v1/health`.
 
+## 2.8 A 1.0.10 deploy failed to build — additive rsync, and a fleet ahead of every tag (2026-08-01)
+
+`set-version.yml` against `prod` failed at *Rebuild container images from the
+release source*: the Go build stopped on
+`internal/workmanagement/project_import_planning.go`, a file the `v1.0.10` tag
+does not contain. Reproduced exactly — all eleven compiler errors, byte for
+byte — by checking out `v1.0.10` and dropping `main`'s copy of that one file
+into it.
+
+**Cause: the source sync was additive, not authoritative.** All four sync
+paths ran with `delete: false`, so every file the *previously deployed* ref had
+and the new one does not stayed behind. The instance had been synced from a
+branch tip (C13b), then pointed at an older tag; rsync copied the tag over the
+top and left the extra files in place. The result is a tree that matches no
+commit — and the API image is built from that tree, so `go build`, which
+compiles every file in a package, failed on a leftover.
+
+**The build failure was protective.** The same leftovers included migrations
+`035`–`038`. `LatestMigrationVersion` reads the migrations **directory** at
+runtime, so a build that had succeeded would have applied all four to the
+database and then reported `38` as its own expected version — 1.0.10 code
+driving a schema four migrations ahead, including `037`, which retires a
+notification that 1.0.10 still uses. The play aborts before the restart, so the
+stacks stayed up on their old containers; the **frontend and mobile images were
+already rebuilt and re-tagged `:latest` from the mixed tree**, so a restart
+before the next clean deploy would come up on them.
+
+**§2.7's "repo and fleet agree at 1.0.10" does not hold.** The stamp agrees;
+the code does not. Verified live, not assumed:
+
+| Probe | beyags | demo | v1.0.10 ships |
+|---|---|---|---|
+| `/api/v1/health` → `version` | `1.0.10` | `1.0.10` | — |
+| `/api/v1/health` → `migrationVersion` | `38` | `38` | `034` (v1.1.0: `036`) |
+| `GET …/reports/statistics` | `401` (exists) | `401` | route absent |
+| `POST …/projects/{id}/unarchive` | `401` (exists) | `401` | route absent — **and absent from `v1.1.0` too** |
+
+A bogus path answers `404` on both, so `401` means the route is registered.
+The fleet is therefore running untagged code at `main`-tip level — past
+`v1.1.0`, not merely past `v1.0.10` — while every stamp reads `1.0.10`. This is
+the blind spot C13b names ("a branch synced ahead of its stamped version
+reports a stale version"), and neither §2.7's verification nor
+`check-version-drift.py` could see it: both compare *stamps to tags*, and a
+stamp that is honest about itself says nothing about which code is running.
+**Stamp parity is not code parity** — that is the seventh C4 recurrence, and
+the first where the stamp was right and the code was wrong.
+
+**Fixed in this repo.** All four sync paths are now authoritative:
+`set-version.yml`, `sync-instance.yml`, and both branches of
+`create-instance.yml` (the release-cache `synchronize` and the host-to-host
+`rsync` the migrate playbooks import) use `--delete`, with
+`podman-compose.client.yml` added to the excludes so it is not removed and
+re-laid in the same run. Excluded paths are protected from deletion by rsync
+itself; verified locally that a `--delete` sync removes a stale source file
+while `.env`, `pgdata/`, `attachments/` and the override all survive.
+`PGDATA_DIR`/`ATTACHMENTS_DIR` are pinned to `./pgdata` and `./attachments` by
+`env.j2`, both covered by the existing excludes — an instance whose `.env`
+moved either **inside** `app_dir` under another name would not be, so check
+before the first `--delete` run.
+
+**Resolved the same day — 1.1.0 re-cut and the ledger bumped.** The operator's
+decision was to ship 1.1.0 as current `main`, carrying the latest
+`release_v25`. Done in the app repo:
+
+- `release_v25` tip `48e7c73` (the completion-confirm warning) had its entry
+  folded into the dated `## v1.1.0 — 2026-08-01` section (`fabfec8`), leaving
+  `## Unreleased` empty.
+- `release_v25` merged into `main` as `4c9dd39`, pushed.
+- **`v1.1.0` moved a third time**, from `1a50189` to `4c9dd39` — 39 commits. The
+  premise was re-verified at cut time, not assumed: beyags and demo both
+  answered `1.0.10` on 2026-08-01, so no deployment's meaning changes. The tag
+  annotation records the move and the previous object (`1fa7a0f`).
+- Gates: CI green on `48e7c73` (run `30689006537`); the full Go suite re-run
+  locally against Postgres — 23 packages ok, 0 failures; `golangci-lint` 0
+  issues and `govulncheck` clean through the pre-push hook.
+
+And in this repo: `octbase_version` and all three ledger `app_version` values
+moved to `1.1.0`. `check-version-drift.py` now reports **4 stamps, 4 on the
+newest release, 0 trailing, 0 failing** — the first time since the script
+existed that nothing is behind.
+
+**Still open:**
+
+1. **The deploy itself has not run.** Ansible is not installed on the dev host;
+   `set-version.yml -e client=beyags` / `-e client=demo` must run from the admin
+   machine. It will be the first run with `--delete`, so confirm each instance's
+   `.env` keeps `PGDATA_DIR`/`ATTACHMENTS_DIR` at their `env.j2` defaults first.
+2. **The stale `:latest` frontend/mobile images on the client that failed** are
+   still built from the mixed tree. The `--delete` sync plus rebuild replaces
+   them; until then, do not restart that stack.
+3. **educaswiss is stamped `1.1.0` but still unprovisioned** (no account, no
+   DNS/edge) — unchanged by this release, and its `notes:` still say so.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash
@@ -602,6 +695,14 @@ scripts/check-version-drift.py            # WARN = pinned behind, FAIL = broken 
 
 # C4 — the resident stacks' own stamps (not this repo's; check against /health)
 grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev ~/demo.ocete.ch/.env
+
+# C13 — code parity, not just stamp parity (§2.8): the live schema must equal
+# the migration count of the tag the ledger names, and a route the tag does not
+# ship must 404. A stamp agreeing with a tag proves nothing about the code.
+for c in beyags demo; do
+  curl -s "https://$c.ocete.ch/api/v1/health" | grep -o '"migrationVersion":[0-9]*'
+done
+ls $OCTBASE_SRC/octbase-api/migrations/*.up.sql | tail -1   # compare, at that tag
 
 # C5 — spec/README paths that no longer exist in code (reverse parity, manual)
 grep -oE '/api/v1/[a-z0-9/{}._-]+' $OCTBASE_SRC/api/openapi.yaml | sort -u \

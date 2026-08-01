@@ -11,7 +11,7 @@ jira_import: true
 max_users: 25
 registered: '2026-07-11'
 status: active
-app_version: '1.0.10'
+app_version: '1.1.0'
 host: prod
 disk_quota_gb: 20
 ports:

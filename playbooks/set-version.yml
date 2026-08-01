@@ -139,7 +139,17 @@
         src: "{{ octbase_release_cache }}/"
         dest: "{{ app_dir }}/"
         archive: true
-        delete: false
+        # The sync must be authoritative, not additive. An additive rsync leaves
+        # behind every file the PREVIOUS ref had and this one does not, which
+        # silently builds a tree that matches no commit: a 1.0.10 deploy over a
+        # branch-tip sync kept internal/workmanagement/project_import_planning.go
+        # and the Go build failed on fields its own release does not have. Worse,
+        # the same leftovers included migrations 035-038, and the API derives its
+        # expected schema version from the migrations DIRECTORY at runtime — so a
+        # build that had succeeded would have migrated the database past what the
+        # deployed code understands. Excluded paths are protected from deletion by
+        # rsync itself, so instance state below survives untouched.
+        delete: true
         # See create-instance.yml: with become the synchronize plugin auto-adds
         # its own --rsync-path=sudo rsync; setting it here prevents a duplicate.
         rsync_path: "sudo rsync"
@@ -152,6 +162,9 @@
           - "--exclude=node_modules"
           # Internal development prompts — not part of the product.
           - "--exclude=/prompts"
+          # Not in the app repo — the next task lays it down. Excluding it keeps
+          # --delete from removing it and leaving a window with no override.
+          - "--exclude=/podman-compose.client.yml"
           - "--chown={{ linux_user }}:{{ linux_user }}"
 
     # Kept in step with create-instance/sync-instance: a base compose change in

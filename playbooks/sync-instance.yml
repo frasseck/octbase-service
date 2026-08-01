@@ -121,7 +121,11 @@
         src: "{{ octbase_git_cache }}/"
         dest: "{{ app_dir }}/"
         archive: true
-        delete: false
+        # Authoritative, not additive — see set-version.yml for what an additive
+        # sync cost us. Moving BACKWARDS along a branch has the same failure: the
+        # files the newer tip added stay behind and get compiled into the image.
+        # Excluded paths are protected from deletion by rsync itself.
+        delete: true
         # See create-instance.yml: with become the synchronize plugin auto-adds
         # its own --rsync-path=sudo rsync; setting it here prevents a duplicate.
         rsync_path: "sudo rsync"
@@ -134,6 +138,9 @@
           - "--exclude=node_modules"
           # Internal development prompts — not part of the product.
           - "--exclude=/prompts"
+          # Not in the app repo — the next task lays it down. Excluding it keeps
+          # --delete from removing it and leaving a window with no override.
+          - "--exclude=/podman-compose.client.yml"
           - "--chown={{ linux_user }}:{{ linux_user }}"
       register: appsrc
       notify: Restart stack
