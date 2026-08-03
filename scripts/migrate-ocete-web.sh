@@ -53,7 +53,7 @@ die()  { printf '\033[1;31mERR\033[0m %s\n' "$*" >&2; exit 1; }
 # ── 0. Pre-flight ──────────────────────────────────────────────────────────
 [[ $EUID -eq 0 ]] || die "must run as root."
 
-for bin in runuser rsync podman podman-compose caddy loginctl systemctl install; do
+for bin in runuser rsync podman podman-compose caddy loginctl systemctl curl ss; do
     command -v "$bin" >/dev/null 2>&1 || die "required command not found: $bin"
 done
 
@@ -186,8 +186,13 @@ EOF
 chown -R "${WEB_USER}:${WEB_USER}" "${WEB_HOME}/.config"
 
 as_web systemctl --user daemon-reload
-as_web systemctl --user enable --now "$UNIT_NAME"
-ok "unit enabled and started"
+# `enable --now` would be a no-op on a re-run: the RemainAfterExit oneshot is
+# still "active" from the previous run, so the freshly built image would never
+# be deployed. `restart` runs ExecStop (compose down) + ExecStart (compose up)
+# even then, and plain-starts the unit on the first run.
+as_web systemctl --user enable "$UNIT_NAME"
+as_web systemctl --user restart "$UNIT_NAME"
+ok "unit enabled and (re)started"
 
 # give the containers a moment, then confirm the site answers on loopback
 sleep 3
@@ -201,15 +206,16 @@ fi
 # ── 8. Cut the edge reverse proxy over to the oct-web instance ─────────────
 log "Repointing the edge proxy (ocete.ch + www.ocete.ch -> ${NEW_TARGET})"
 
-if grep -q "$OLD_TARGET" "$EDGE_CADDY"; then
+if grep -qF "$OLD_TARGET" "$EDGE_CADDY"; then
     BACKUP="${EDGE_CADDY}.bak.$(date +%Y%m%d-%H%M%S)"
     cp -a "$EDGE_CADDY" "$BACKUP"
     ok "backed up edge config to $BACKUP"
 
     # Only the two marketing blocks use :8082; dev.ocete.ch uses :8081 and is
-    # not matched, so it is left exactly as-is.
-    n=$(grep -c "$OLD_TARGET" "$EDGE_CADDY")
-    sed -i "s#${OLD_TARGET}#${NEW_TARGET}#g" "$EDGE_CADDY"
+    # not matched, so it is left exactly as-is. grep -F / escaped dots: the
+    # target must match literally, not as a regex where "." is any character.
+    n=$(grep -cF "$OLD_TARGET" "$EDGE_CADDY")
+    sed -i "s#${OLD_TARGET//./\\.}#${NEW_TARGET}#g" "$EDGE_CADDY"
     log "  replaced ${n} occurrence(s) of ${OLD_TARGET}"
     [[ "$n" -eq 2 ]] || warn "expected 2 replacements (ocete.ch + www.ocete.ch), got ${n} — review $EDGE_CADDY"
 
@@ -221,7 +227,7 @@ if grep -q "$OLD_TARGET" "$EDGE_CADDY"; then
         caddy validate --config "$EDGE_CADDY" >/dev/null 2>&1 || true
         die "edge validation FAILED — restored $BACKUP, edge NOT reloaded. Fix manually."
     fi
-elif grep -q "$NEW_TARGET" "$EDGE_CADDY"; then
+elif grep -qF "$NEW_TARGET" "$EDGE_CADDY"; then
     ok "edge already points at ${NEW_TARGET} — nothing to change"
 else
     warn "edge config no longer contains ${OLD_TARGET} nor ${NEW_TARGET}."
@@ -238,7 +244,9 @@ fi
 # ── 9. Verify both domains through the edge ────────────────────────────────
 log "Verifying public reachability through the edge (localhost:80, Host header)"
 for h in ocete.ch www.ocete.ch dev.ocete.ch; do
-    code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $h" "http://127.0.0.1:80/" || echo "ERR")
+    # NB: no "|| echo ERR" inside the substitution — a failing curl still
+    # prints its -w output, which would yield "000ERR" and match no case.
+    code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $h" "http://127.0.0.1:80/") || code=000
     case "$code" in
         401) warn "  $h -> HTTP 401 (PASSWORD PROMPT!) — investigate, this must be public";;
         000|ERR) warn "  $h -> no response (is the edge up? is the upstream running?)";;

@@ -381,10 +381,13 @@ lines are now re-applied from the ledger on every run, in either direction.
   Caddy vhost containing nested blocks (`header { … }` etc.); the leftover
   duplicate vhost then fails `caddy validate` **after** the data restore,
   stranding the migration at cutover. Worked for the demo's flat vhost;
-  revisit before the next adoption/rename.
+  revisit before the next adoption/rename. **Fixed 2026-08-03:** replaced by
+  a brace-depth-aware inline script that deletes from the vhost header to
+  its balanced closing brace.
 - `set-max-users.yml` filters on the `com.docker.compose.service` label
   where everything else uses `io.podman.compose.service` (C7); a miss only
-  causes an unnecessary restart, not a wrong result.
+  causes an unnecessary restart, not a wrong result. **Fixed 2026-08-03:**
+  now filters on `io.podman.compose.service` like every other playbook.
 - Both backup scripts start the restore-test Postgres **before** taking any
   dump, so an image-pull/startup failure aborts the night with zero dumps —
   exactly the live failure mode since 2026-07-14 (D13). Consider dumping
@@ -681,6 +684,31 @@ existed that nothing is behind.
    them; until then, do not restart that stack.
 3. **educaswiss is stamped `1.1.0` but still unprovisioned** (no account, no
    DNS/edge) — unchanged by this release, and its `notes:` still say so.
+
+## 2.9 Playbook review fixes 2026-08-03 (client override, lifecycle guards)
+
+### D26 — Client override never set `OCTBASE_FRONTEND_TRUSTED_PROXIES` (C2/C9) — **fixed**
+`release_v18` recovered per-client IPs for rate limiting with TWO variables:
+the API's `OCTBASE_TRUSTED_PROXIES` (set per client since then) and the
+frontend Caddy's `OCTBASE_FRONTEND_TRUSTED_PROXIES` — which neither `env.j2`
+nor `podman-compose.client.yml` ever set. With it empty, the frontend Caddy
+overwrites the edge's `X-Forwarded-For` with the rootless-podman NAT peer,
+so the API's per-IP rate limiting collapsed into one bucket per instance —
+the exact failure v18 was cut to fix, reintroduced one hop earlier. **Fixed:**
+the client override now sets it (default `10.89.0.0/16`, matching
+`octbase_trusted_proxies`); safe only because client frontends are
+loopback-bound (C9). Reaches clients on their next create/sync/set-version
+run.
+
+Also fixed the same day, in the playbooks (no contract change): stale
+sync-instance restart handler firing after the health gate; the nested-brace
+vhost-retire regex (D21 first bullet); empty source secrets overwriting fresh
+ones in the migrate carries; hardcoded `octbase_postgres_1` names; missing
+`status == 'active'` guards on set-max-users/set-resources; a pre-DROP
+empty-target guard (`-e force_restore=true` to override) plus a C13
+migrationVersion guard in migrate-host; remove-instance now starts a stopped
+stack for the final dump; timers restart on unit change; monitoring deploys
+`check-health.sh` from the release cache instead of `octbase_src`.
 
 ## 3. Review checklist (run per release, ~10 minutes)
 

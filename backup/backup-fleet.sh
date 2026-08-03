@@ -12,8 +12,9 @@
 #   2. verifies the dump by RESTORING it into one throwaway Postgres
 #      (a backup you have never restored is a hope, not a backup),
 #   3. tars the attachments directory and the .env (the secrets a
-#      disaster-restore needs),
-#   4. prunes files older than RETENTION_DAYS in that client's directory.
+#      disaster-restore needs).
+# Then files older than RETENTION_DAYS are pruned across the whole backup
+# root (offboarded clients' dirs must age out too, not just registered ones).
 # Afterwards, if OFFHOST_SYNC_CMD is set, it is executed once; its failure
 # fails the run. Any per-client failure yields a non-zero exit so the systemd
 # unit surfaces it (journalctl -u octbase-fleet-backup.service).
@@ -33,7 +34,11 @@ CONF=/etc/octbase/backup.conf
 [ -f "$CONF" ] && . "$CONF"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/octbase/fleet}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
-TEST_IMAGE="${TEST_IMAGE:-registry.access.redhat.com/hi/postgresql:18}"
+# Pinned to the exact version the client stacks run (PG 18.4): a major-only
+# tag that is already cached never re-pulls, so it could silently fall behind
+# the servers and erode the C11 "restore client >= server" guarantee. Bump
+# this pin together with server upgrades.
+TEST_IMAGE="${TEST_IMAGE:-registry.access.redhat.com/hi/postgresql:18.4}"
 OFFHOST_SYNC_CMD="${OFFHOST_SYNC_CMD:-}"
 
 REGISTRY=/etc/octbase/clients.d
@@ -74,12 +79,22 @@ for _ in $(seq 1 30); do
   podman exec "$TEST_CTR" pg_isready -U test >/dev/null 2>&1 && break
   sleep 1
 done
-if ! podman exec "$TEST_CTR" pg_isready -U test >/dev/null 2>&1; then
+# pg_isready can answer during the image's initdb bootstrap, before the final
+# server is up (the first DROP/CREATE would then fail with no retry) — so
+# require a real query to succeed before trusting the instance.
+ready=0
+for _ in $(seq 1 30); do
+  if podman exec "$TEST_CTR" psql -U test -d postgres -tAc 'SELECT 1' >/dev/null 2>&1; then
+    ready=1; break
+  fi
+  sleep 1
+done
+if [ "$ready" -ne 1 ]; then
   log "ERROR: restore-test instance did not become ready"
   exit 1
 fi
 
-# ── Per registered client: dump, restore-test, files, prune ─────────────────
+# ── Per registered client: dump, restore-test, files ────────────────────────
 for f in "${confs[@]}"; do
   NAME="" USER_ACCT="" HOME_DIR=""
   . "$f"
@@ -105,7 +120,9 @@ for f in "${confs[@]}"; do
   fi
   size=$(stat -c%s "$dump" 2>/dev/null || echo 0)
   if [ "$size" -lt 1024 ]; then
-    log "[$NAME] ERROR: dump suspiciously small (${size} bytes)"; rc_overall=1; continue
+    # keep nothing: a known-bad dump lying around invites restoring it (and
+    # the continue would also skip its chmod 600 below)
+    log "[$NAME] ERROR: dump suspiciously small (${size} bytes) — deleted"; rc_overall=1; rm -f "$dump"; continue
   fi
 
   src_users="$(cd /tmp && as_user "$USER_ACCT" "$uid" \
@@ -118,14 +135,19 @@ for f in "${confs[@]}"; do
     -c 'DROP DATABASE IF EXISTS restoretest' \
     -c 'CREATE DATABASE restoretest' >>"$LOG" 2>&1
   podman cp "$dump" "$TEST_CTR:/tmp/restore.dump"
+  # a nonzero pg_restore exit means at least one object failed to restore —
+  # that fails the test outright; the assertions below catch silent corruption
   podman exec "$TEST_CTR" pg_restore -U test -d restoretest --no-owner /tmp/restore.dump >>"$LOG" 2>&1
+  restore_rc=$?
   podman exec "$TEST_CTR" rm -f /tmp/restore.dump >/dev/null 2>&1
 
   tables="$(podman exec "$TEST_CTR" psql -U test -d restoretest -tAc \
     "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>/dev/null | tr -d '[:space:]')"
   [ -z "$tables" ] && tables=0
 
-  if [ "$tables" -lt 1 ]; then
+  if [ "$restore_rc" -ne 0 ]; then
+    log "[$NAME] ERROR: restore test FAILED — pg_restore exited $restore_rc (see $LOG)"; rc_overall=1
+  elif [ "$tables" -lt 1 ]; then
     log "[$NAME] ERROR: restore test FAILED — no tables restored"; rc_overall=1
   elif [ "$src_users" != "NA" ]; then
     dst_users="$(podman exec "$TEST_CTR" psql -U test -d restoretest -tAc \
@@ -157,11 +179,15 @@ for f in "${confs[@]}"; do
   chmod 600 "$dump"
   log "[$NAME] dump written: $dump (${size} bytes)"
 
-  # 4) Prune
-  deleted=$(find "$dest" -maxdepth 1 \( -name '*.dump' -o -name '*.tar.gz' \) \
-    -type f -mtime "+$RETENTION_DAYS" -print -delete | wc -l)
-  [ "$deleted" -gt 0 ] && log "[$NAME] pruned $deleted file(s) older than ${RETENTION_DAYS}d"
 done
+
+# ── Prune old backups ────────────────────────────────────────────────────────
+# Across ALL directories under the backup root, not just currently registered
+# clients — otherwise an offboarded client's dir keeps its files forever, past
+# every retention promise. Before the off-host sync, so the copy matches.
+deleted=$(find "$BACKUP_ROOT" \( -name '*.dump' -o -name '*.tar.gz' \) \
+  -type f -mtime "+$RETENTION_DAYS" -print -delete | wc -l)
+[ "$deleted" -gt 0 ] && log "pruned $deleted file(s) older than ${RETENTION_DAYS}d"
 
 # ── Off-host copy (readiness plan B1) ────────────────────────────────────────
 if [ -n "$OFFHOST_SYNC_CMD" ]; then

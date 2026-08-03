@@ -29,13 +29,22 @@
       ansible.builtin.set_fact:
         effective_max_users: "{{ (max_users if (max_users is defined) else client_ledger.max_users) | int }}"
 
+    # Same name-pattern and status guards as create-instance/sync-instance:
+    # the restart below would silently resurrect a suspended client's stack,
+    # and the client name is interpolated into paths and shell commands.
     - name: Validate
       ansible.builtin.assert:
         that:
           - client is defined
           - client_ledger.name == client
+          - client_ledger.name is match('^[a-z][a-z0-9-]{1,27}$')
+          - client_ledger.status == 'active'
           - effective_max_users | int >= 1
-        fail_msg: "max_users must be a positive integer"
+        fail_msg: >-
+          Ledger entry for '{{ client | default('?') }}' must be a well-formed
+          name with status 'active' (a suspended client would be resurrected
+          by the restart below), and max_users must be a positive integer —
+          run ./ledger/ledger.py validate.
 
     - name: Scope the play to the client's host
       ansible.builtin.meta: end_host
@@ -68,7 +77,7 @@
       environment: "{{ user_env }}"
       ansible.builtin.shell: >
         podman exec
-        "$(podman ps -q --filter label=com.docker.compose.service=octbase-api | head -n1)"
+        "$(podman ps -q --filter label=io.podman.compose.service=octbase-api | head -n1)"
         printenv OCTBASE_MAX_USERS
       register: running_max_users
       changed_when: false

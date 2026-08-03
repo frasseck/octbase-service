@@ -9,8 +9,11 @@
 #
 # Takes a final backup (pg_dump + attachments + .env) to {{ backup_dir }},
 # then deletes the Linux account with all its data and deregisters the client
-# from monitoring and the edge. Pass -e skip_backup=true to skip the backup
-# (e.g. when the stack is already broken beyond a dump).
+# from monitoring and the edge. A stopped stack (e.g. a suspended client being
+# offboarded) is started just long enough for the dump — offboarding never
+# requires forgoing the backup. Pass -e skip_backup=true ONLY when the stack
+# is broken beyond ANY dump: it deletes the sole copy of the client's
+# database and files, and ALL DATA IS THEN UNRECOVERABLE.
 #
 # Afterwards, manually: remove the DNS record, reload the edge proxy, and set
 # status: removed in the ledger file (keep the file as the historical record).
@@ -49,6 +52,10 @@
       ansible.builtin.assert:
         that:
           - client is defined
+          - client_ledger.name == client
+          # Same name pattern create-instance enforces — the name is
+          # interpolated into root shell commands and paths below.
+          - client_ledger.name is match('^[a-z][a-z0-9-]{1,27}$')
           - confirm is defined
           - confirm == client
         fail_msg: >-
@@ -92,6 +99,82 @@
             mode: "0700"
           when: not (skip_backup | default(false) | bool)
 
+        # A suspended client's unit is down and its ExecStop is `podman-compose
+        # down` — no containers exist at all, so the final pg_dump would fail
+        # and push the operator toward -e skip_backup=true, i.e. deleting the
+        # only copy of the data. Detect that and start the stack just for the
+        # dump; the unconditional stop in the teardown below winds it down
+        # again either way.
+        - name: Check whether the client's postgres container is running
+          become_user: "{{ linux_user }}"
+          environment: "{{ user_env }}"
+          ansible.builtin.shell: |
+            set -euo pipefail
+            podman ps -q \
+              --filter label=io.podman.compose.project=octbase \
+              --filter label=io.podman.compose.service=postgres | head -n 1
+          args:
+            executable: /bin/bash
+          register: pg_running
+          changed_when: false
+          when: not (skip_backup | default(false) | bool)
+
+        - name: Start the stopped stack for the final backup
+          become_user: "{{ linux_user }}"
+          environment: "{{ user_env }}"
+          ansible.builtin.systemd_service:
+            name: octbase
+            scope: user
+            daemon_reload: true
+            state: started
+          when:
+            - not (skip_backup | default(false) | bool)
+            - pg_running.stdout | trim | length == 0
+
+        # Label-based, like migrate-instance.yml: the octbase_postgres_1 name
+        # is a podman-compose naming convention that has already changed once
+        # (<project>-postgres-1 on newer versions). Client accounts always use
+        # compose project "octbase" (contract C7). Re-resolved here because a
+        # start above creates fresh containers.
+        - name: Resolve the postgres container for the backup
+          become_user: "{{ linux_user }}"
+          environment: "{{ user_env }}"
+          ansible.builtin.shell: |
+            set -euo pipefail
+            podman ps -q \
+              --filter label=io.podman.compose.project=octbase \
+              --filter label=io.podman.compose.service=postgres | head -n 1
+          args:
+            executable: /bin/bash
+          register: pg_cid
+          changed_when: false
+          when: not (skip_backup | default(false) | bool)
+
+        - name: A postgres container must be up for the final backup
+          ansible.builtin.assert:
+            that: pg_cid.stdout | trim | length > 0
+            fail_msg: >-
+              No running postgres container for {{ linux_user }} even after
+              starting the stack — investigate before offboarding. Only if the
+              stack is broken beyond ANY dump, re-run with -e skip_backup=true
+              — which deletes the sole copy of this client's data and makes
+              ALL DATA UNRECOVERABLE.
+          when: not (skip_backup | default(false) | bool)
+
+        - name: Wait for postgres readiness
+          become_user: "{{ linux_user }}"
+          environment: "{{ user_env }}"
+          ansible.builtin.command:
+            cmd: >-
+              podman exec {{ pg_cid.stdout | trim }}
+              pg_isready -U octbase -d octbase
+          register: pg_ready
+          retries: 30
+          delay: 2
+          until: pg_ready.rc == 0
+          changed_when: false
+          when: not (skip_backup | default(false) | bool)
+
         # pipefail is essential: without it the pipeline's exit code is gzip's,
         # and a dead postgres container would yield an empty "successful"
         # backup right before the account (and the only data copy) is deleted.
@@ -99,7 +182,7 @@
           ansible.builtin.shell: |
             set -euo pipefail
             sudo -u {{ linux_user }} XDG_RUNTIME_DIR=/run/user/{{ client_uid }} \
-              podman exec octbase_postgres_1 pg_dump -U octbase octbase \
+              podman exec {{ pg_cid.stdout | trim }} pg_dump -U octbase octbase \
               | gzip > {{ backup_dir }}/{{ client }}-db-{{ ts }}.sql.gz
           args:
             executable: /bin/bash
@@ -129,6 +212,9 @@
             executable: /bin/bash
           when: not (skip_backup | default(false) | bool)
 
+        # Also returns a stack that was started above just for the backup to
+        # its stopped state (moot for the account itself — it is deleted two
+        # tasks later — but it keeps the teardown order deterministic).
         - name: Stop and disable the stack
           become_user: "{{ linux_user }}"
           environment: "{{ user_env }}"
@@ -171,7 +257,7 @@
     - name: Manual follow-up steps
       ansible.builtin.debug:
         msg:
-          - "Client {{ client }} removed{{ '' if (skip_backup | default(false) | bool) else '; final backup in ' + backup_dir }}."
+          - "Client {{ client }} removed{{ ' WITHOUT a final backup (skip_backup) — ALL DATA IS UNRECOVERABLE' if (skip_backup | default(false) | bool) else '; final backup in ' + backup_dir }}."
           - "1) DNS (manual): delete the {{ fqdn }} record."
           - "2) Edge proxy: reload it (its {{ client }}.caddy snippet is gone)."
           - "3) Ledger: set status: removed in ledger/clients/{{ client }}.yml and commit."

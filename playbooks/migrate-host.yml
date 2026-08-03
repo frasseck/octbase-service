@@ -8,23 +8,35 @@
 # Procedure:
 #   1. edit `host:` in ledger/clients/<name>.yml to the NEW host,
 #      ./ledger/ledger.py validate, commit;
-#   2. make sure octbase_src is on the client's release (create-instance
-#      provisions the target from it — it must be at or above the source's
-#      schema version, contract C13);
-#   3. ansible-playbook playbooks/migrate-host.yml \
+#   2. ansible-playbook playbooks/migrate-host.yml \
 #        -e client=<name> -e source_host=<old inventory host>
 #      -> phase 1 prompts: type the client name to confirm
 #
 # Pass -e confirm=<name> to skip the prompt (scripted runs). Ansible also
 # skips it in a non-interactive session, where the assert then fails closed.
 #
+# Phase 2 provisions the target from the ledger's release tag (app_version →
+# v<x.y.z>, the same source create-instance.yml always deploys) — there is no
+# octbase_src to keep in step. The tag must still be at or above the SOURCE's
+# schema version (C13): phase 1 records the source's /health migrationVersion
+# while the source is still up, and phase 3 refuses the restore when the
+# freshly provisioned target reports an older one. Best effort — when the
+# source's health endpoint cannot be read (already-broken source), the guard
+# is skipped and the schema ordering is on the operator.
+#
+# Phase 3 DROPS the target's freshly provisioned database before restoring
+# the dump over it. It refuses when that database already holds users — i.e.
+# is not the empty one phase 2 just created — so a mistargeted run cannot
+# destroy a live instance; override a deliberate re-restore with
+# -e force_restore=true.
+#
 # What moves: the database (pg_dump → restore), attachments, and the crypto
 # secrets that data at rest depends on (JWT/SCM/MFA keys — same set as
-# migrate-instance.yml). What does NOT move: the app source (fresh from
-# octbase_src), the Postgres password (fresh from the target's first deploy)
-# and the account itself — the source stack is left STOPPED in place as a
-# safety copy for manual removal after verification. Downtime spans from the
-# source freeze until the target health check passes.
+# migrate-instance.yml). What does NOT move: the app source (fresh from the
+# ledger's release tag), the Postgres password (fresh from the target's first
+# deploy) and the account itself — the source stack is left STOPPED in place
+# as a safety copy for manual removal after verification. Downtime spans from
+# the source freeze until the target health check passes.
 #
 # Afterwards, manually: repoint the <name>.<base_domain> DNS record to the
 # target host (lower its TTL beforehand), reload BOTH edge proxies, and
@@ -105,6 +117,28 @@
         mode: "0700"
       register: ws
 
+    # C13 schema guard, recorded here while the source is still up: phase 3
+    # compares this against the target's /health migrationVersion and refuses
+    # to restore a NEWER schema into an OLDER build. Best effort — a source
+    # whose health endpoint is already unreadable still gets migrated, with
+    # the guard skipped (see the header).
+    - name: Read the source's migration version
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ client_ledger.ports.api }}/health"
+        return_content: true
+        # A degraded instance answers 503 with the same JSON body — its
+        # migrationVersion is still worth recording.
+        status_code: [200, 503]
+      register: source_health
+      failed_when: false
+
+    - name: Record the source migration version for phase 3
+      ansible.builtin.set_fact:
+        source_migration_version: "{{ source_health.json.db.migrationVersion }}"
+      when:
+        - source_health.json is defined
+        - source_health.json.db.migrationVersion is defined
+
     - name: Stop the API (freeze writes; postgres stays up for the dump)
       become_user: "{{ linux_user }}"
       environment: "{{ user_env }}"
@@ -117,13 +151,38 @@
       args:
         executable: /bin/bash
 
+    # Label-based, like migrate-instance.yml and the API stop above: the
+    # octbase_postgres_1 name is a podman-compose naming convention that has
+    # already changed once (<project>-postgres-1 on newer versions). Client
+    # accounts always use compose project "octbase" (contract C7).
+    - name: Resolve the source postgres container
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        podman ps -q \
+          --filter label=io.podman.compose.project=octbase \
+          --filter label=io.podman.compose.service=postgres | head -n 1
+      args:
+        executable: /bin/bash
+      register: source_postgres_cid
+      changed_when: false
+
+    - name: Source postgres container must be running for the dump
+      ansible.builtin.assert:
+        that: source_postgres_cid.stdout | trim | length > 0
+        fail_msg: >-
+          No running postgres container for {{ linux_user }} on
+          {{ inventory_hostname }} — the dump needs a live database. Start the
+          stack (or investigate why it is down) before moving this client.
+
     # pipefail is essential: without it the pipeline's exit code is gzip's,
     # and a dead postgres container would yield an empty "successful" dump.
     - name: Dump the source database
       ansible.builtin.shell: |
         set -euo pipefail
         sudo -u {{ linux_user }} XDG_RUNTIME_DIR=/run/user/{{ client_uid }} \
-          podman exec octbase_postgres_1 pg_dump -U octbase octbase \
+          podman exec {{ source_postgres_cid.stdout | trim }} pg_dump -U octbase octbase \
           | gzip > {{ ws.path }}/db.sql.gz
       args:
         executable: /bin/bash
@@ -305,14 +364,52 @@
                   | map('split', '=', 1)) }}
       no_log: true
 
+    # An EMPTY value in the source .env is "unset", not a secret to carry —
+    # copying it would blank the freshly generated strong secret the target
+    # was provisioned with (and OCTBASE_JWT_SECRET= would then stop the API).
     - name: Carry the crypto secrets into the client .env
       ansible.builtin.lineinfile:
         path: "{{ app_dir }}/.env"
         regexp: "^{{ item }}="
         line: "{{ item }}={{ source_env[item] }}"
       loop: "{{ carry_keys }}"
-      when: item in source_env
+      when: item in source_env and source_env[item] | length > 0
       no_log: true
+
+    # C13 schema guard (see the header): the value was recorded in phase 1
+    # while the source was still up; the target API is still up here from
+    # create-instance's health gate. Restoring a dump whose schema is newer
+    # than the target build understands would leave the target permanently
+    # degraded (its /health expects its own migrations directory's version).
+    - name: Read the target's migration version
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ client_ledger.ports.api }}/health"
+        return_content: true
+      register: target_health
+      when: hostvars[source_host].source_migration_version is defined
+
+    - name: Refuse to restore a newer schema than the target build understands
+      ansible.builtin.assert:
+        that: >-
+          (hostvars[source_host].source_migration_version | int)
+          <= (target_health.json.db.migrationVersion | int)
+        fail_msg: >-
+          The source database is at migration version
+          {{ hostvars[source_host].source_migration_version }} but the target
+          build only understands
+          {{ target_health.json.db.migrationVersion | default('?') }} —
+          the ledger's app_version selects a release OLDER than what the
+          source was running. Point app_version at a release at or above the
+          source's and re-run (contract C13).
+      when: hostvars[source_host].source_migration_version is defined
+
+    - name: Warn when the schema guard could not run
+      ansible.builtin.debug:
+        msg: >-
+          Source migration version was unreadable in phase 1 — the C13 schema
+          guard is SKIPPED. Make sure the ledger's app_version is at or above
+          the release the source was running before trusting this restore.
+      when: hostvars[source_host].source_migration_version is not defined
 
     - name: Stop the client API for the restore
       become_user: "{{ linux_user }}"
@@ -326,15 +423,75 @@
       args:
         executable: /bin/bash
 
+    # Label-based, like the API stop above: the octbase_postgres_1 name is a
+    # podman-compose naming convention that has already changed once
+    # (<project>-postgres-1 on newer versions).
+    - name: Resolve the target postgres container
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        podman ps -q \
+          --filter label=io.podman.compose.project=octbase \
+          --filter label=io.podman.compose.service=postgres | head -n 1
+      args:
+        executable: /bin/bash
+      register: target_postgres_cid
+      changed_when: false
+
+    - name: Target postgres container must be running after provisioning
+      ansible.builtin.assert:
+        that: target_postgres_cid.stdout | trim | length > 0
+        fail_msg: >-
+          No running postgres container for {{ linux_user }} — create-instance
+          (phase 2) should have left the stack up. Investigate before
+          restoring.
+
+    # The DROP below is unconditional once reached — make sure the database
+    # it destroys really is the fresh, empty one phase 2 just provisioned. A
+    # fresh target has a fully migrated schema but ZERO users (the admin
+    # bootstrap is skipped for migrations); any user row means this target is
+    # live and the restore would destroy it.
+    - name: Count users in the target database
+      ansible.builtin.shell: |
+        set -euo pipefail
+        run() { sudo -u {{ linux_user }} XDG_RUNTIME_DIR=/run/user/{{ client_uid }} "$@"; }
+        # to_regclass: a target that has not even migrated a users table yet
+        # is as fresh as it gets — count that as 0 rather than erroring.
+        if [ "$(run podman exec {{ target_postgres_cid.stdout | trim }} \
+              psql -U octbase -d octbase -tAc "SELECT to_regclass('public.users') IS NOT NULL")" = "t" ]; then
+          run podman exec {{ target_postgres_cid.stdout | trim }} \
+            psql -U octbase -d octbase -tAc 'SELECT count(*) FROM users'
+        else
+          echo 0
+        fi
+      args:
+        executable: /bin/bash
+        chdir: /tmp
+      register: target_user_count
+      changed_when: false
+
+    - name: Refuse to drop a target database that already holds data
+      ansible.builtin.assert:
+        that: >-
+          (target_user_count.stdout | trim | int) == 0
+          or (force_restore | default(false) | bool)
+        fail_msg: >-
+          The target database for {{ client }} already contains
+          {{ target_user_count.stdout | trim }} user(s) — it is not the fresh
+          instance phase 2 provisions, and the restore below would DROP it.
+          If overwriting this data really is intended, re-run with
+          -e force_restore=true (see the play header).
+
     - name: Replace the fresh database with the source dump
       ansible.builtin.shell: |
         set -euo pipefail
         run() { sudo -u {{ linux_user }} XDG_RUNTIME_DIR=/run/user/{{ client_uid }} "$@"; }
-        run podman exec octbase_postgres_1 psql -U octbase -d postgres -q \
+        run podman exec {{ target_postgres_cid.stdout | trim }} psql -U octbase -d postgres -q \
           -c 'DROP DATABASE IF EXISTS octbase WITH (FORCE)' \
           -c 'CREATE DATABASE octbase OWNER octbase'
         gunzip -c {{ ws.path }}/db.sql.gz \
-          | run podman exec -i octbase_postgres_1 psql -q -v ON_ERROR_STOP=1 -U octbase -d octbase
+          | run podman exec -i {{ target_postgres_cid.stdout | trim }} psql -q -v ON_ERROR_STOP=1 -U octbase -d octbase
       args:
         executable: /bin/bash
         chdir: /tmp

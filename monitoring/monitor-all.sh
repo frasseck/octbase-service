@@ -47,6 +47,15 @@ worse() { # echo the more severe of two states
   esac
 }
 
+json_str() { # make $1 safe inside a double-quoted JSON string value:
+  # backslashes escaped FIRST (before we add any of our own), double quotes
+  # neutralized to single, every control char (incl. newline/tab) to a space —
+  # one odd check-health line must not break every reader of status.json.
+  local s="${1//\\/\\\\}"
+  s="${s//\"/\'}"
+  printf '%s' "$s" | tr '\000-\037\177' ' '
+}
+
 overall=OK
 exit_code=0
 changes=""
@@ -56,7 +65,11 @@ declare -A new_states
 shopt -s nullglob
 confs=("$REGISTRY"/*.conf)
 if [ ${#confs[@]} -eq 0 ]; then
+  # An empty registry is indistinguishable from a wiped one — never report
+  # a fleet of zero clients as a healthy fleet.
   echo "no clients registered in $REGISTRY" >&2
+  overall=DEGRADED
+  exit_code=1
 fi
 
 # Registry confs may override EDGE_PROBE per client (e.g. while a new
@@ -69,7 +82,7 @@ for f in "${confs[@]}"; do
   . "$f"
   [ -n "$NAME" ] && [ -n "$USER_ACCT" ] || continue
 
-  state=OK detail=""
+  state=OK detail="" health=""
   uid="$(id -u "$USER_ACCT" 2>/dev/null)"
   if [ -z "$uid" ]; then
     state=DOWN detail="linux account missing"
@@ -82,6 +95,13 @@ for f in "${confs[@]}"; do
       1) state=DEGRADED detail="stack degraded" ;;
       *) state=DOWN detail="stack down (rc=$rc)" ;;
     esac
+    # Keep the checker's own diagnosis: without it status.json only says
+    # "stack degraded" with no cause. Truncated (BEFORE escaping, so no escape
+    # sequence is cut in half) — a breadcrumb, not the full report (run
+    # check-health directly for that).
+    health="$out"
+    [ ${#health} -gt 400 ] && health="${health:0:400}..."
+    health="$(json_str "$health")"
     # Edge probe: the same /health, but through DNS + edge proxy + TLS.
     if [ "$EDGE_PROBE" = 1 ] && [ -n "$DOMAIN" ]; then
       # NB: no "|| echo 000" inside the substitution — a failing curl still
@@ -135,11 +155,26 @@ for f in "${confs[@]}"; do
     changes="${changes}${NAME}: ${prev} -> ${state} (${detail})\n"
   fi
 
-  detail="${detail//$'\n'/ }"   # keep status.json single-line-safe
+  detail="$(json_str "$detail")"   # keep status.json valid and single-line
+  health_json=""
+  [ -n "$health" ] && health_json=",\"health\":\"$health\""
   [ -n "$json_clients" ] && json_clients="$json_clients,"
-  json_clients="$json_clients\"$NAME\":{\"state\":\"$state\",\"detail\":\"${detail//\"/\'}\"$disk_json}"
+  json_clients="$json_clients\"$NAME\":{\"state\":\"$state\",\"detail\":\"$detail\"$health_json$disk_json}"
   [ $PRINT -eq 1 ] && printf '%-12s %-9s %s\n' "$NAME" "$state" "$detail"
 done
+
+# A client whose conf disappears from the registry must not vanish silently:
+# every name in the previous run's states that no longer has a conf gets one
+# state-change alert ("-> gone"). A deliberate offboarding passes through
+# here once too — one alert per removal is the right amount of noise.
+if [ -f "$LAST_FILE" ]; then
+  while IFS='=' read -r n prev_state; do
+    [ -n "$n" ] || continue
+    if [ -z "${new_states[$n]:-}" ]; then
+      changes="${changes}${n}: ${prev_state:-?} -> gone (conf removed from $REGISTRY)\n"
+    fi
+  done < "$LAST_FILE"
+fi
 
 # Write-then-rename: readers of status.json must never see a partial file.
 printf '{"overall":"%s","ts":"%s","clients":{%s}}\n' \

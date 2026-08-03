@@ -51,3 +51,19 @@ services:
       OCTBASE_FEATURE_TASKVIEW: "${OCTBASE_FEATURE_TASKVIEW:-true}"
     volumes:
       - ./attachments:/data/attachments:U
+
+  octbase-frontend:
+    environment:
+      # X-Forwarded-For repair. Rootless podman NATs the edge proxy's
+      # 127.0.0.1 connection, so the frontend Caddy sees a compose-network
+      # peer for every request; with the app-repo default (trust nobody) it
+      # then OVERWRITES the edge's X-Forwarded-For with that NAT address and
+      # the API's per-IP rate limiting collapses into one bucket per instance.
+      # Trusting the podman network range here is safe ONLY because client
+      # stacks bind the frontend to 127.0.0.1 (C9) — the edge proxy is the
+      # sole caller, so nobody can reach this port to forge a client IP (see
+      # OCTBASE_FRONTEND_TRUSTED_PROXIES in the app repo's .env.example).
+      # 10.89.0.0/16 is the default rootless-podman network range, matching
+      # octbase_trusted_proxies in group_vars — the API applies that as its
+      # own second check on the forwarded chain.
+      OCTBASE_FRONTEND_TRUSTED_PROXIES: "${OCTBASE_FRONTEND_TRUSTED_PROXIES:-10.89.0.0/16}"

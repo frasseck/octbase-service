@@ -33,6 +33,21 @@
       ansible.builtin.set_fact:
         client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
 
+    # Same name-pattern and status guards as create-instance/sync-instance:
+    # this play re-registers the client with the monitor below, which on a
+    # suspended client would re-enable DOWN alerts for a deliberately stopped
+    # stack — and the client name is interpolated into paths and commands.
+    - name: Validate ledger entry
+      ansible.builtin.assert:
+        that:
+          - client is defined
+          - client_ledger.name == client
+          - client_ledger.name is match('^[a-z][a-z0-9-]{1,27}$')
+          - client_ledger.status == 'active'
+        fail_msg: >-
+          Ledger entry for '{{ client | default('?') }}' is missing, malformed
+          or not 'active' — run ./ledger/ledger.py validate.
+
     - name: Scope the play to the client's host
       ansible.builtin.meta: end_host
       when: inventory_hostname != (client_ledger.host | default(default_client_host))

@@ -56,7 +56,11 @@
         name: octbase-fleet-backup.timer
         daemon_reload: "{{ units.changed }}"
         enabled: true
-        state: started
+        # restarted when the unit file changed: a RUNNING timer keeps its old
+        # schedule until restarted — daemon-reload re-reads the file but does
+        # not re-arm the live timer, so a changed OnCalendar would otherwise
+        # only take effect at the next boot.
+        state: "{{ 'restarted' if units.changed else 'started' }}"
 
     - name: Usage hints
       ansible.builtin.debug:

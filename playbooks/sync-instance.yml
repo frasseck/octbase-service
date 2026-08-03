@@ -114,6 +114,12 @@
         depth: 1
         single_branch: true
         force: true
+        # single_branch pins the clone's fetch refspec to the FIRST branch it
+        # ever fetched, so a later -e octbase_branch=<other> could not be
+        # checked out until the cache dir was hand-deleted. Fetching the
+        # requested branch by explicit refspec makes the cache follow whatever
+        # branch this run asks for, shallow clone or not.
+        refspec: "+refs/heads/{{ octbase_branch }}:refs/remotes/origin/{{ octbase_branch }}"
       register: appclone
 
     - name: Sync application source into the client account
@@ -143,7 +149,6 @@
           - "--exclude=/podman-compose.client.yml"
           - "--chown={{ linux_user }}:{{ linux_user }}"
       register: appsrc
-      notify: Restart stack
 
     # Kept in step with create-instance: a base podman-compose.yml change on the
     # branch may need a matching override, and the override is not in the app
@@ -156,7 +161,6 @@
         group: "{{ linux_user }}"
         mode: "0644"
       register: override
-      notify: Restart stack
 
     # The one .env line this playbook owns: without it a sync could move the
     # code ahead of the stamp and the instance would report a stale version
@@ -172,6 +176,10 @@
     # App code is baked into the images at build time (not bind-mounted).
     # Always rebuild/restart on sync so the instance is guaranteed to run the
     # freshly fetched main tip even if rsync metadata says "unchanged".
+    # Deliberately NO notify/handler wiring for this: the explicit restart
+    # below is the only one, and it runs BEFORE the health gate. A handler
+    # would fire at the end of the play — after the gate — restarting the
+    # stack a second time with nothing verifying it came back.
     - name: Rebuild container images from the synced source
       become_user: "{{ linux_user }}"
       environment: "{{ user_env }}"
@@ -211,13 +219,3 @@
           {{ fqdn }} synced to {{ octbase_repo }}@{{ octbase_branch }}
           ({{ appclone.after | default('?') | truncate(12, true, '') }}).
           Rebuilt and restarted; API /health 200 on 127.0.0.1:{{ client_ledger.ports.api }}.
-
-  handlers:
-    - name: Restart stack
-      become_user: "{{ linux_user }}"
-      environment: "{{ user_env }}"
-      ansible.builtin.systemd_service:
-        name: octbase
-        scope: user
-        daemon_reload: true
-        state: restarted

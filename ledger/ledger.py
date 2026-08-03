@@ -32,8 +32,9 @@ GROUP_VARS_FILE = (Path(__file__).resolve().parent.parent
                    / "inventory" / "group_vars" / "all" / "main.yml")
 
 # Max 28 chars: the Linux account is "oct-<name>" and useradd caps
-# usernames at 32 characters.
-NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,27}$")
+# usernames at 32 characters. Must end in a letter or digit — the name is
+# also the subdomain label, and "acme-.ocete.ch" is not a valid DNS label.
+NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,26}[a-z0-9]$")
 # "demo" is deliberately not reserved: the public demo is ledger-managed
 # since 2026-07-11 (clients/demo.yml, migrated via migrate-instance.yml).
 RESERVED_NAMES = {"www", "dev", "mail", "api", "octbase", "admin"}
@@ -65,6 +66,10 @@ def inventory_hosts():
         return set((inv.get("octbase_hosts", {}).get("hosts") or {}).keys())
     except OSError:
         return set()
+    except yaml.YAMLError as e:
+        # unlike a missing file, a broken one must not silently disable
+        # host validation — say what is wrong and stop
+        sys.exit(f"cannot parse {INVENTORY_FILE}: {e}")
 
 
 def default_host():
@@ -83,6 +88,9 @@ def default_host():
         reason = f"no default_client_host in {GROUP_VARS_FILE.name}"
     except OSError as e:
         reason = f"cannot read {GROUP_VARS_FILE}: {e.strerror}"
+    except yaml.YAMLError as e:
+        # a broken file must not degrade into the pick-a-host fallback
+        sys.exit(f"cannot parse {GROUP_VARS_FILE}: {e}")
     hosts = sorted(inventory_hosts())
     fallback = hosts[0] if hosts else "prod"
     print(f"warning: {reason} — defaulting to host '{fallback}'"
@@ -95,7 +103,10 @@ def load_clients():
     clients = {}
     for f in sorted(CLIENTS_DIR.glob("*.yml")):
         with open(f) as fh:
-            clients[f.stem] = yaml.safe_load(fh) or {}
+            try:
+                clients[f.stem] = yaml.safe_load(fh) or {}
+            except yaml.YAMLError as e:
+                sys.exit(f"cannot parse {f}: {e}")
     return clients
 
 

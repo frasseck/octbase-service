@@ -45,6 +45,10 @@
       ansible.builtin.assert:
         that:
           - client is defined
+          - client_ledger.name == client
+          # Same name pattern create-instance enforces — the name reaches
+          # paths and the edge/monitor registries below.
+          - client_ledger.name is match('^[a-z][a-z0-9-]{1,27}$')
           - confirm is defined and confirm == client
           - client_ledger.status == 'suspended'
         fail_msg: >-

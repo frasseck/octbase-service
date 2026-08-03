@@ -49,15 +49,21 @@ CHANGELOG_RE = re.compile(r"^##\s+v?(\d+\.\d+\.\d+)\s*[—–-]\s*(\d{4}-\d{2}-\
 
 
 def group_vars():
-    with open(GROUP_VARS) as fh:
-        return yaml.safe_load(fh) or {}
+    try:
+        with open(GROUP_VARS) as fh:
+            return yaml.safe_load(fh) or {}
+    except yaml.YAMLError as e:
+        sys.exit(f"cannot parse {GROUP_VARS}: {e}")
 
 
 def stamps(gv):
     """Every version stamp in this repo, in report order: (label, version, note)."""
     out = [("octbase_version (group_vars)", str(gv.get("octbase_version") or ""), "")]
     for f in sorted(CLIENTS_DIR.glob("*.yml")):
-        c = yaml.safe_load(f.read_text()) or {}
+        try:
+            c = yaml.safe_load(f.read_text()) or {}
+        except yaml.YAMLError as e:
+            sys.exit(f"cannot parse {f}: {e}")
         status = c.get("status", "active")
         if status == "removed":          # historical record, deploys nothing
             continue
@@ -80,12 +86,20 @@ def remote_tags(repo_url):
         return [], f"git ls-remote failed: {last}"
     names = {ref.rsplit("/", 1)[-1].removesuffix("^{}")
              for _, _, ref in (l.partition("\t") for l in p.stdout.splitlines()) if ref}
-    return sort_tags(names), ""
+    tags = sort_tags(names)
+    if not tags:
+        # reachable but useless is its own failure — don't let an empty reason
+        # masquerade as "unreachable" downstream
+        return [], f"remote {repo_url} has no vX.Y.Z tags"
+    return tags, ""
 
 
 def local_tags(app_repo):
-    p = subprocess.run(["git", "-C", str(app_repo), "tag", "-l"],
-                       capture_output=True, text=True)
+    try:
+        p = subprocess.run(["git", "-C", str(app_repo), "tag", "-l"],
+                           capture_output=True, text=True)
+    except OSError as e:   # e.g. no git binary — same failure surface as remote_tags
+        return [], f"git tag -l failed ({e})"
     if p.returncode != 0:
         return [], f"git tag -l failed in {app_repo}"
     return sort_tags(p.stdout.split()), ""
@@ -104,32 +118,58 @@ def changelog_dates(app_repo):
     return {m.group(1): m.group(2) for m in CHANGELOG_RE.finditer(path.read_text())}
 
 
-def check(version, tags, dates):
-    """(status, detail) for one stamp against the tag list and changelog."""
+def checkout_contains_tag(app_repo, tag):
+    """True if the checkout has `tag` merged into its HEAD — only then can its
+    CHANGELOG.md be expected to contain the release entry."""
+    try:
+        p = subprocess.run(["git", "-C", str(app_repo), "merge-base",
+                            "--is-ancestor", tag, "HEAD"],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return p.returncode == 0
+
+
+def check(version, tags, dates, app_repo):
+    """(status, detail, trailing) for one stamp against tags and changelog.
+
+    `trailing` is True only when the stamp is behind the newest tag — a WARN
+    can also come from an unverifiable C4, and the summary must not call
+    that a pin.
+    """
     if not version:
-        return "FAIL", "no version set"
+        return "FAIL", "no version set", False
     tag = f"v{version}"
     key = tuple(map(int, version.split("."))) if re.fullmatch(r"\d+\.\d+\.\d+", version) else None
     if key is None:
-        return "FAIL", f"{version!r} is not a X.Y.Z version"
+        return "FAIL", f"{version!r} is not a X.Y.Z version", False
     if tag not in tags:
         newest_key = tuple(map(int, TAG_RE.match(tags[0]).groups())) if tags else None
         if newest_key and key > newest_key:
-            return "FAIL", f"ahead of every tag — newest is {tags[0]} (C13)"
-        return "FAIL", f"no tag {tag} in the app repo (C13)"
+            return "FAIL", f"ahead of every tag — newest is {tags[0]} (C13)", False
+        return "FAIL", f"no tag {tag} in the app repo (C13)", False
 
     behind = tags.index(tag)
+    forced = None   # a status the C4 check forces regardless of drift distance
     if dates is None:
         c4 = "changelog not checked"
     elif version in dates:
         c4 = f"changelog {dates[version]}"
+    elif checkout_contains_tag(app_repo, tag):
+        # The checkout has the release merged, so the entry must be there.
+        return "FAIL", f"tag {tag} exists but has no dated CHANGELOG.md entry (C4)", False
     else:
-        return "FAIL", f"tag {tag} exists but has no dated CHANGELOG.md entry (C4)"
+        # Tags come from the REMOTE, changelog dates from the LOCAL checkout
+        # (a shared tree on any branch). A checkout that does not contain the
+        # tag cannot contain the entry either — its absence proves nothing
+        # about the release, so this is a WARN, not a false red.
+        c4 = f"local checkout behind the remote tag {tag} — cannot verify C4"
+        forced = "WARN"
 
     if behind == 0:
-        return "OK", f"newest release · {c4}"
+        return forced or "OK", f"newest release · {c4}", False
     plural = "release" if behind == 1 else "releases"
-    return "WARN", f"{behind} {plural} behind newest {tags[0]} · {c4}"
+    return forced or "WARN", f"{behind} {plural} behind newest {tags[0]} · {c4}", True
 
 
 def main():
@@ -151,7 +191,8 @@ def main():
         if not args.app_repo.exists():
             sys.exit(f"cannot resolve app repo tags: {err}; no checkout at {args.app_repo}")
         tags, err2 = local_tags(args.app_repo)
-        source = f"git tag -l in {args.app_repo} (remote unreachable: {err})"
+        # err always names the concrete reason (unreachable, no tags, no URL)
+        source = f"git tag -l in {args.app_repo} ({err})"
         if not tags:
             sys.exit(f"cannot resolve app repo tags: {err2 or err}")
 
@@ -165,17 +206,25 @@ def main():
     print(f"  changelog  {changelog}\n")
 
     results = []
+    trailing = 0
     for label, version, note in stamps(gv):
-        status, detail = check(version, tags, dates)
+        status, detail, is_trailing = check(version, tags, dates, args.app_repo)
         results.append(status)
+        trailing += is_trailing
         print(f"  {status:<5} {label:<38} {version or '-':<9} {detail}")
         if note:
             print(f"        {'':<38} {'':<9} {note}")
 
     fails, warns = results.count("FAIL"), results.count("WARN")
-    print(f"\n  {len(results)} stamps: {results.count('OK')} on the newest release, "
-          f"{warns} trailing (WARN), {fails} failing")
-    if warns and not fails:
+    # Not every WARN is a pin: a stamp on the newest tag can WARN because C4
+    # could not be verified — the summary must not count that as trailing.
+    unverified = warns - trailing
+    summary = (f"\n  {len(results)} stamps: {results.count('OK')} on the newest release, "
+               f"{trailing} trailing (WARN), {fails} failing")
+    if unverified:
+        summary += f" — plus {unverified} WARN (C4 unverifiable, not trailing)"
+    print(summary)
+    if trailing and not fails:
         print("  Trailing is a pin, not a defect — bumping it is the rollout decision "
               "(README 'Which version an instance runs').")
     return 1 if fails else 0

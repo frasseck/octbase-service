@@ -23,9 +23,25 @@
         - "{{ clients_registry_dir }}"
         - /var/lib/octbase-monitor
 
-    - name: Install check-health.sh (from the app repo checkout)
+    # check-health.sh must come from a VERSIONED release, not octbase_src (the
+    # admin's live dev working tree, which deploys whatever branch — and
+    # whatever uncommitted edit — that checkout happens to be sitting on; the
+    # same reasoning that moved create-instance.yml to the release cache).
+    # Fetch the platform release tag into that same cache and copy from there.
+    - name: Fetch the platform release on the admin machine
+      delegate_to: localhost
+      run_once: true
+      become: false
+      ansible.builtin.git:
+        repo: "{{ octbase_repo }}"
+        dest: "{{ octbase_release_cache }}"
+        version: "v{{ octbase_version }}"
+        depth: 1
+        force: true
+
+    - name: Install check-health.sh (from the release cache)
       ansible.builtin.copy:
-        src: "{{ octbase_src }}/octbase-operations/check-health.sh"
+        src: "{{ octbase_release_cache }}/octbase-operations/check-health.sh"
         dest: /usr/local/lib/octbase/check-health.sh
         mode: "0755"
 
@@ -60,7 +76,11 @@
         name: octbase-monitor.timer
         daemon_reload: "{{ units.changed }}"
         enabled: true
-        state: started
+        # restarted when the unit file changed: a RUNNING timer keeps its old
+        # schedule until restarted — daemon-reload re-reads the file but does
+        # not re-arm the live timer, so a changed OnCalendar would otherwise
+        # only take effect at the next boot.
+        state: "{{ 'restarted' if units.changed else 'started' }}"
 
     - name: Usage hints
       ansible.builtin.debug:

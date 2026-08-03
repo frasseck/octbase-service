@@ -13,7 +13,10 @@
 #
 #   ansible-playbook playbooks/migrate-instance.yml -e client=demo \
 #       [-e source_fqdn=demo.ocete.ch -e source_user=claude \
-#        -e source_dir=/home/claude/demo.ocete.ch -e confirm=demo]
+#        -e source_dir_in=/home/claude/demo.ocete.ch -e confirm=demo]
+#
+# (source_dir_in, not source_dir: extra vars must name the PROMPTED variable
+# to suppress its prompt — empty or omitted means /home/<account>/<domain>.)
 #
 # What moves: the database (pg_dump → restore), attachments, and the crypto
 # secrets that data at rest depends on (JWT/SCM/MFA keys). What does NOT
@@ -25,9 +28,15 @@
 # (image build + restore, typically minutes).
 #
 # Phase 1 dumps and stops the source; then create-instance.yml provisions the
-# target as usual; phase 2 restores the data, carries the secrets, and cuts
+# target as usual; phase 3 restores the data, carries the secrets, and cuts
 # the edge proxy over (adds the snippet import to the edge Caddyfile and
 # retires the source's hardcoded vhost block, validate + reload).
+#
+# Phase 3 DROPS the target's freshly provisioned database before restoring
+# the dump over it. It refuses when that database already holds users — i.e.
+# is not the empty one phase 2 just created — so a mistargeted run cannot
+# destroy a live instance; override a deliberate re-restore with
+# -e force_restore=true.
 
 - name: Migrate Octbase installation — phase 1 of 3, dump & stop the source
   hosts: octbase_hosts
@@ -81,6 +90,19 @@
         source_label: "{{ source_fqdn.split('.') | first }}"
         source_dir: "{{ source_dir_in | trim or '/home/' + source_user + '/' + source_fqdn }}"
 
+    # The prompted path is interpolated into root shell commands below —
+    # constrain it to a plain absolute path (no whitespace, no shell
+    # metacharacters, no traversal) before it gets anywhere near one. The
+    # `| quote` filters on the interpolations are belt and braces on top.
+    - name: Source path must be a plain absolute path
+      ansible.builtin.assert:
+        that:
+          - source_dir is match('^/[A-Za-z0-9._/-]+$')
+          - "'..' not in source_dir"
+        fail_msg: >-
+          Source path '{{ source_dir }}' is not a plain absolute path —
+          refusing to interpolate it into shell commands.
+
     - name: Refuse to migrate an installation onto itself
       ansible.builtin.assert:
         that:
@@ -115,7 +137,7 @@
     # ONE account apart — client accounts all use "octbase", contract C7).
     - name: Read the source compose project name
       ansible.builtin.command:
-        cmd: awk -F= '/^COMPOSE_PROJECT_NAME=/{v=$2} END{print v}' {{ source_dir }}/.env
+        cmd: awk -F= '/^COMPOSE_PROJECT_NAME=/{v=$2} END{print v}' {{ (source_dir ~ '/.env') | quote }}
       register: src_project_raw
       changed_when: false
 
@@ -126,13 +148,30 @@
     - name: Read source DB container/service hint from .env
       ansible.builtin.command:
         cmd: >-
-          awk -F= '/^(POSTGRES_CONTAINER_NAME|POSTGRES_CONTAINER|DB_CONTAINER_NAME|DB_CONTAINER|DB_SERVICE|POSTGRES_SERVICE|OCTBASE_DB_HOST|DB_HOST)=/{print $2; exit}' {{ source_dir }}/.env
+          awk -F= '/^(POSTGRES_CONTAINER_NAME|POSTGRES_CONTAINER|DB_CONTAINER_NAME|DB_CONTAINER|DB_SERVICE|POSTGRES_SERVICE|OCTBASE_DB_HOST|DB_HOST)=/{print $2; exit}' {{ (source_dir ~ '/.env') | quote }}
       register: src_db_hint_raw
       changed_when: false
 
     - name: Set source DB hint fact
       ansible.builtin.set_fact:
         source_db_hint: "{{ src_db_hint_raw.stdout | trim }}"
+
+    # Both values come from the SOURCE checkout's .env — a file the client
+    # account itself can write — and are interpolated into root-executed
+    # shells below. Constrain them before any interpolation: a project name
+    # is a compose identifier, a DB hint is a container/service/host token
+    # (optionally quoted in .env, optionally host:port).
+    - name: Refuse unsafe values read from the source .env
+      ansible.builtin.assert:
+        that:
+          - source_project is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+          - source_db_hint | length == 0
+            or source_db_hint is match('^["\x27]?[A-Za-z0-9._-]+(:[0-9]+)?["\x27]?$')
+        fail_msg: >-
+          COMPOSE_PROJECT_NAME or DB host/container hint in {{ source_dir }}/.env
+          contains characters that are unsafe to pass to a root shell
+          (project: '{{ source_project }}', hint: '{{ source_db_hint }}').
+          Fix the source .env before migrating.
 
     - name: Resolve source postgres container id
       ansible.builtin.shell: |
@@ -157,16 +196,16 @@
           fi
 
           # If .env gives a compose service name, ask podman-compose for it.
-          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
-            --env-file {{ source_dir }}/.env \
+          cid="$(run podman-compose -f {{ (source_dir ~ '/podman-compose.yml') | quote }} \
+            --env-file {{ (source_dir ~ '/.env') | quote }} \
             ps -q "${db_hint}" 2>/dev/null | head -n 1 || true)"
           if [[ -n "${cid}" ]]; then
             echo "${cid}"
             exit 0
           fi
 
-          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
-            --env-file {{ source_dir }}/.env \
+          cid="$(run podman-compose -f {{ (source_dir ~ '/podman-compose.yml') | quote }} \
+            --env-file {{ (source_dir ~ '/.env') | quote }} \
             -p {{ source_project }} ps -q "${db_hint}" 2>/dev/null | head -n 1 || true)"
           if [[ -n "${cid}" ]]; then
             echo "${cid}"
@@ -176,16 +215,16 @@
 
         # Most reliable path: ask podman-compose from the source checkout.
         for svc in postgres db octbase-postgres; do
-          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
-            --env-file {{ source_dir }}/.env \
+          cid="$(run podman-compose -f {{ (source_dir ~ '/podman-compose.yml') | quote }} \
+            --env-file {{ (source_dir ~ '/.env') | quote }} \
             ps -q ${svc} 2>/dev/null | head -n 1 || true)"
           if [[ -n "${cid}" ]]; then
             echo "${cid}"
             exit 0
           fi
 
-          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
-            --env-file {{ source_dir }}/.env \
+          cid="$(run podman-compose -f {{ (source_dir ~ '/podman-compose.yml') | quote }} \
+            --env-file {{ (source_dir ~ '/.env') | quote }} \
             -p {{ source_project }} ps -q ${svc} 2>/dev/null | head -n 1 || true)"
           if [[ -n "${cid}" ]]; then
             echo "${cid}"
@@ -233,16 +272,16 @@
         run() { sudo -u {{ source_user }} XDG_RUNTIME_DIR=/run/user/{{ source_uid }} "$@"; }
 
         for svc in octbase-api api backend web; do
-          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
-            --env-file {{ source_dir }}/.env \
+          cid="$(run podman-compose -f {{ (source_dir ~ '/podman-compose.yml') | quote }} \
+            --env-file {{ (source_dir ~ '/.env') | quote }} \
             ps -q ${svc} 2>/dev/null | head -n 1 || true)"
           if [[ -n "${cid}" ]]; then
             echo "${cid}"
             exit 0
           fi
 
-          cid="$(run podman-compose -f {{ source_dir }}/podman-compose.yml \
-            --env-file {{ source_dir }}/.env \
+          cid="$(run podman-compose -f {{ (source_dir ~ '/podman-compose.yml') | quote }} \
+            --env-file {{ (source_dir ~ '/.env') | quote }} \
             -p {{ source_project }} ps -q ${svc} 2>/dev/null | head -n 1 || true)"
           if [[ -n "${cid}" ]]; then
             echo "${cid}"
@@ -311,6 +350,17 @@
       ansible.builtin.set_fact:
         migrate_ws: "{{ ws.path }}"
 
+    # A monitor run during the migration window would fire a spurious DOWN
+    # alert for the deliberately stopped source — deregister it first, exactly
+    # as migrate-host.yml does. A legacy source that was never registered
+    # simply has no conf here. create-instance re-registers the TARGET name in
+    # phase 2; a differently named source conf stays gone (phase 3 also drops
+    # it in the rename case).
+    - name: Deregister the source from monitoring
+      ansible.builtin.file:
+        path: "{{ clients_registry_dir }}/{{ source_label }}.conf"
+        state: absent
+
     - name: Stop the source API (freeze writes; postgres stays up for the dump)
       ansible.builtin.command:
         cmd: >-
@@ -360,7 +410,7 @@
 
     - name: Stage attachments
       ansible.builtin.command:
-        cmd: cp -a {{ source_dir }}/attachments {{ migrate_ws }}/attachments
+        cmd: cp -a {{ (source_dir ~ '/attachments') | quote }} {{ migrate_ws }}/attachments
       when: src_attach.stat.exists and src_attach.stat.isdir
 
     - name: Stop and disable a source systemd user unit (managed-client source)
@@ -504,13 +554,16 @@
                   | map('split', '=', 1)) }}
       no_log: true
 
+    # An EMPTY value in the source .env is "unset", not a secret to carry —
+    # copying it would blank the freshly generated strong secret the target
+    # was provisioned with (and OCTBASE_JWT_SECRET= would then stop the API).
     - name: Carry the crypto secrets into the client .env
       ansible.builtin.lineinfile:
         path: "{{ app_dir }}/.env"
         regexp: "^{{ item }}="
         line: "{{ item }}={{ source_env[item] }}"
       loop: "{{ carry_keys }}"
-      when: item in source_env
+      when: item in source_env and source_env[item] | length > 0
       no_log: true
 
     - name: Stop the client API for the restore
@@ -518,6 +571,42 @@
       environment: "{{ user_env }}"
       ansible.builtin.command:
         cmd: podman stop {{ target_api_cid.stdout | trim }}
+
+    # The DROP below is unconditional once reached — make sure the database
+    # it destroys really is the fresh, empty one phase 2 just provisioned. A
+    # fresh target has a fully migrated schema but ZERO users (the admin
+    # bootstrap is skipped for migrations); any user row means this target is
+    # live and the restore would destroy it.
+    - name: Count users in the target database
+      ansible.builtin.shell: |
+        set -euo pipefail
+        run() { sudo -u {{ linux_user }} XDG_RUNTIME_DIR=/run/user/{{ client_uid }} "$@"; }
+        # to_regclass: a target that has not even migrated a users table yet
+        # is as fresh as it gets — count that as 0 rather than erroring.
+        if [ "$(run podman exec {{ target_postgres_cid.stdout | trim }} \
+              psql -U octbase -d octbase -tAc "SELECT to_regclass('public.users') IS NOT NULL")" = "t" ]; then
+          run podman exec {{ target_postgres_cid.stdout | trim }} \
+            psql -U octbase -d octbase -tAc 'SELECT count(*) FROM users'
+        else
+          echo 0
+        fi
+      args:
+        executable: /bin/bash
+        chdir: /tmp
+      register: target_user_count
+      changed_when: false
+
+    - name: Refuse to drop a target database that already holds data
+      ansible.builtin.assert:
+        that: >-
+          (target_user_count.stdout | trim | int) == 0
+          or (force_restore | default(false) | bool)
+        fail_msg: >-
+          The target database for {{ client }} already contains
+          {{ target_user_count.stdout | trim }} user(s) — it is not the fresh
+          instance phase 2 provisions, and the restore below would DROP it.
+          If overwriting this data really is intended, re-run with
+          -e force_restore=true (see the play header).
 
     - name: Replace the fresh database with the source dump
       ansible.builtin.shell: |
@@ -576,11 +665,44 @@
         - edge_cutover
         - finalize
 
+    # Brace-depth aware, not a regex: a vhost body nests blocks (header { },
+    # handle { }, tls { } …) and a '[^}]*' regex stops at the FIRST closing
+    # brace — deleting half the block and corrupting the Caddyfile
+    # mid-cutover. Deletion runs from the matching vhost header line to its
+    # balanced closing brace; single-line Caddy placeholders ({host}) open
+    # and close on the same line, so they don't disturb the count.
     - name: Retire the source domain's hardcoded vhost block (if any)
-      ansible.builtin.replace:
-        path: "{{ edge_caddyfile }}"
-        regexp: '(?m)^{{ source_fqdn | regex_escape }}\s*\{[^}]*\}\n?'
-        replace: ""
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import re, sys
+            path, fqdn = sys.argv[1], sys.argv[2]
+            with open(path) as f:
+                lines = f.readlines()
+            hdr = re.compile(r'^' + re.escape(fqdn) + r'\s*\{')
+            out, i, removed = [], 0, 0
+            while i < len(lines):
+                if hdr.match(lines[i]):
+                    depth = 0
+                    while i < len(lines):
+                        depth += lines[i].count('{') - lines[i].count('}')
+                        i += 1
+                        if depth <= 0:
+                            break
+                    removed += 1
+                    continue
+                out.append(lines[i])
+                i += 1
+            if removed:
+                with open(path, 'w') as f:
+                    f.writelines(out)
+            print('removed' if removed else 'absent')
+          - "{{ edge_caddyfile }}"
+          - "{{ source_fqdn }}"
+      register: vhost_retired
+      changed_when: vhost_retired.stdout | trim == 'removed'
       tags:
         - edge_cutover
         - finalize
