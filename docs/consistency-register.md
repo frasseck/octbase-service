@@ -710,6 +710,28 @@ migrationVersion guard in migrate-host; remove-instance now starts a stopped
 stack for the final dump; timers restart on unit change; monitoring deploys
 `check-health.sh` from the release cache instead of `octbase_src`.
 
+## 2.10 Core-script review fixes 2026-08-03 (no contract change)
+
+The same review pass fixed nine defects in the toolkit's scripts (shipped
+with §2.9 in one commit; evidence on OCT-2 at beyags.ocete.ch): both backup
+scripts honor `pg_restore`'s exit status in the restore-test verdict, chmod
+their root/dumps to 700/600, remove undersized dumps instead of keeping
+them, and prune the whole backup root so offboarded clients' files age out;
+`backup-octbase.sh` flags existing-but-stopped postgres containers as
+ERRORs instead of silently omitting them; `monitor-all.sh` alerts once per
+deregistered client (`→ gone`) and reports an empty registry as DEGRADED;
+`migrate-ocete-web.sh` deploys via `enable` + `restart` (the old
+`enable --now` was a no-op on the active RemainAfterExit unit) and a failed
+curl can no longer read as `000ERR`; `check-version-drift.py` FAILs the
+changelog check only when the local checkout contains the tag (WARN
+"cannot verify C4" otherwise); `ledger.py` rejects trailing-hyphen names
+and both python tools fail loudly on unparseable YAML.
+
+Follow-ups from the review's residual list (OCT-10/OCT-11): backup
+discovery is scoped to the `io.podman.compose.service=postgres` label so an
+unrelated exited container named `*postgres*` cannot fail the nightly, and
+both prunes sweep emptied per-client directories after files age out.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash

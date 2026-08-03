@@ -41,8 +41,13 @@ trap cleanup EXIT
 # ps -a, not just ps: a stopped stack still has data worth backing up, and a
 # run that silently omits it would look like success. Every postgres container
 # that exists but is not running fails the run loudly instead.
-mapfile -t ALL_PG < <(podman ps -a --format '{{.Names}}' | grep -i postgres || true)
-mapfile -t PG_CONTAINERS < <(podman ps --format '{{.Names}}' | grep -i postgres || true)
+# Discovery is scoped to compose-managed postgres services by label — a name
+# grep also matched any unrelated exited container with "postgres" in its
+# name (a scratch run, a renamed experiment) and turned every nightly red
+# until someone removed it. The label is what the playbooks resolve by too.
+PG_LABEL="io.podman.compose.service=postgres"
+mapfile -t ALL_PG < <(podman ps -a --filter "label=$PG_LABEL" --format '{{.Names}}')
+mapfile -t PG_CONTAINERS < <(podman ps --filter "label=$PG_LABEL" --format '{{.Names}}')
 if [ "${#ALL_PG[@]}" -eq 0 ]; then
 	log "ERROR: no postgres containers found — nothing to back up"
 	exit 1
@@ -152,6 +157,10 @@ done
 # forever, past every retention promise.
 deleted=$(find "$BACKUP_ROOT" -name '*.dump' -type f -mtime "+$RETENTION_DAYS" -print -delete | wc -l)
 [ "$deleted" -gt 0 ] && log "pruned $deleted dump(s) older than ${RETENTION_DAYS}d"
+# A removed container's directory lingers after its last dump ages out; sweep
+# emptied dirs so the root reflects what actually has backups. An active
+# container's dir is never empty here — its dump was written above.
+find "$BACKUP_ROOT" -mindepth 1 -type d -empty -delete
 
 if [ "$rc_overall" -eq 0 ]; then
 	log "backup run completed OK"

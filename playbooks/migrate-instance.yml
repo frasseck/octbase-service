@@ -20,8 +20,9 @@
 #
 # What moves: the database (pg_dump → restore), attachments, and the crypto
 # secrets that data at rest depends on (JWT/SCM/MFA keys). What does NOT
-# move: the app source (re-synced from octbase_src at the platform release —
-# make sure it is at or above the source's schema version), the Postgres
+# move: the app source (phase 2 provisions it fresh from the versioned
+# release cache, octbase_repo @ octbase_version, via create-instance.yml —
+# make sure that release is at or above the source's schema version), the Postgres
 # password and ports (fresh from the ledger), and the old account itself —
 # the source stack is left STOPPED in place for manual removal after
 # verification. Downtime: from phase 1 until the health check passes

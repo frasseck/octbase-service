@@ -188,6 +188,10 @@ done
 deleted=$(find "$BACKUP_ROOT" \( -name '*.dump' -o -name '*.tar.gz' \) \
   -type f -mtime "+$RETENTION_DAYS" -print -delete | wc -l)
 [ "$deleted" -gt 0 ] && log "pruned $deleted file(s) older than ${RETENTION_DAYS}d"
+# An offboarded client's directory lingers after its last file ages out; sweep
+# emptied dirs so the root (and the off-host copy below) reflects what actually
+# has backups. An active client's dir is never empty here — dumped above.
+find "$BACKUP_ROOT" -mindepth 1 -type d -empty -delete
 
 # ── Off-host copy (readiness plan B1) ────────────────────────────────────────
 if [ -n "$OFFHOST_SYNC_CMD" ]; then
