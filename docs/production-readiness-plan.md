@@ -135,12 +135,30 @@ the actual node, its edge Caddy and the first real cross-host move.
 The vault plumbing is in place since 2026-07-17: `group_vars/all/` is now a
 directory, `smtp_pass` reads `vault_smtp_pass` from
 `inventory/group_vars/all/vault.yml` (see `vault.yml.sample` and the README's
-"Secrets & the SMTP vault"). What remains: **create the actual encrypted
-vault.yml** from the admin machine with the rotated password — rotating the
-marketing SMTP password (register §2.1 item 3) and populating the vault are
-the same step — and document where vault keys and off-host-backup encryption
-keys are kept — a backup nobody can decrypt after a laptop loss is not a
-backup.
+"Secrets & the SMTP vault"). **2026-08-04: the relay itself is now configured**
+— `smtp_host`/`smtp_user` in `main.yml` name the marketing contact form's
+All-Inkl mailbox, verified from the production host to offer STARTTLS,
+authenticate, and accept `noreply@beyags.com` as envelope sender. Until then
+`smtp_host` was empty, so **no client instance could send mail at all**:
+invitations and password resets went to a container's stdout, which is what
+`reset-user-password.yml` exists to work around.
+
+What remains: **create the actual encrypted vault.yml** from the admin machine
+with the rotated password — rotating the marketing SMTP password (register §2.1
+item 3) and populating the vault are the same step — then re-run
+`create-instance.yml` for each active client, since the SMTP keys are
+platform-managed and only reach an existing `.env` on a playbook run. Until the
+vault exists, `smtp_pass` is `''` and the relay refuses the unauthenticated
+connection, so mail now fails loudly instead of vanishing — better, but still
+not working.
+
+Note the coupling this creates: one credential now serves both the marketing
+form and every client's transactional mail, so a rotation touches both. Giving
+the app its own mailbox is the better end state; this was the step that gets
+mail working without waiting for it.
+
+Also still open: document where vault keys and off-host-backup encryption keys
+are kept — a backup nobody can decrypt after a laptop loss is not a backup.
 
 ### S3 — Deploy from the registry, not per-client builds  *(1 day)*
 CI already publishes per-commit images to GHCR (register F6). Teach

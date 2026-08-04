@@ -2,6 +2,26 @@
 # secret this repo carries (per-client secrets are generated at first deploy
 # and live only in the client's .env on the server).
 #
+# STATUS 2026-08-04: main.yml now names the relay
+# (v091380.kasserver.com:587, user m07fb762 — the marketing contact form's
+# All-Inkl mailbox, verified reachable and authenticating from the production
+# host). The real vault.yml still DOES NOT EXIST, so smtp_pass resolves to ''
+# and the relay rejects the unauthenticated connection: mail is configured but
+# not yet working. Creating it is the last step, and it cannot be done from the
+# production host — ansible-vault is not installed there, deliberately.
+#
+# The password to paste is WEB_SMTP_PASSWORD from ~/credentials/.env.ocete on
+# the production host (0600, owner claude). Copy it over a secure channel; do
+# not commit it anywhere in plain text, and do not paste it into a chat.
+#
+# After creating the vault, the relay reaches existing clients only when
+# create-instance.yml is re-run for each of them — the SMTP keys are
+# platform-managed and re-synced on every run:
+#
+#     for c in beyags demo; do
+#       ansible-playbook playbooks/create-instance.yml -e client=$c --ask-vault-pass
+#     done
+#
 # Do NOT copy this file into place in plain text. Create the real vault.yml
 # encrypted, from the admin machine:
 #

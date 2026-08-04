@@ -51,16 +51,34 @@ octbase_release_cache: "{{ lookup('env', 'HOME') }}/.cache/octbase-service/octba
 # than a downgrade. Raise it when the app repo tags its next release.
 octbase_version: "1.0.1"
 
-# SMTP relay for outgoing app mail (invitations, notifications). Leaving the
-# host empty makes the API log mail to stdout — set a real relay before
-# onboarding production clients. The password is the one secret here: it lives
-# in vault.yml next to this file (see vault.yml.sample), never in plain text.
-# Without that vault file the relay stays unauthenticated — which is why the
-# default is empty rather than an error.
-smtp_host: ""
+# SMTP relay for outgoing app mail (invitations, password resets,
+# notifications). Until 2026-08-04 smtp_host was empty, which makes the API log
+# mail to stdout — so no client instance could send anything, and a locked-out
+# user's reset link went to a container's log. That is what reset-user-password.yml
+# exists to work around.
+#
+# This is the same All-Inkl relay the marketing site's contact-form mailer uses
+# (~/credentials/.env.ocete, WEB_SMTP_*), which the readiness plan nominates for
+# exactly this. Verified 2026-08-04 from the production host: STARTTLS offered,
+# AUTH accepted, and MAIL FROM <noreply@beyags.com> accepted — the relay does
+# not require the envelope sender to equal the authenticated mailbox, so
+# smtp_from stays the app's own no-reply address.
+#
+# ONE credential now serves the marketing form AND every client instance's
+# transactional mail. Rotating it therefore touches both; the rotation itself
+# has been open since 2026-07-10 (register §2.1). Splitting the app onto its own
+# mailbox is the better end state — this is the pragmatic step that gets mail
+# working now.
+#
+# The password is the one secret here and is NOT in this file: it comes from
+# vault_smtp_pass in the ansible-vault-encrypted vault.yml beside this file
+# (see vault.yml.sample). Without that vault the relay stays unauthenticated,
+# which this relay rejects — so mail fails loudly rather than silently
+# disappearing, and that is the intended failure mode.
+smtp_host: "v091380.kasserver.com"
 smtp_port: 587
 smtp_from: noreply@beyags.com
-smtp_user: ""
+smtp_user: "m07fb762"
 smtp_pass: "{{ vault_smtp_pass | default('') }}"
 
 # CIDRs whose X-Forwarded-For the API honors (the stack's own frontend Caddy
