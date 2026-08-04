@@ -753,6 +753,17 @@ one). **A pointer that fails silently is worse than one that fails loudly**;
 this is the second entry in this register (with §2.8) where a deploy source
 was wrong in a way no check could see.
 
+**Update, later on 2026-08-04: the predecessor was renamed, not deleted** —
+`frasseck/octbase` → **`frasseck/octbase_mvp`** (still private, not archived).
+Note what that does and does not change. GitHub keeps a redirect on a rename,
+so **`git@github.com:frasseck/octbase.git` still resolves** and still serves the
+pre-baseline history: the exact silent-wrong failure above is still reachable by
+anyone who types the old URL, and only deletion would turn it into a loud clone
+failure. What the rename does buy is a name that no longer reads as the current
+product. Nothing in this repo or the app repo references either name any more
+(swept 2026-08-04), so nothing here depends on the redirect — but do not treat
+the rename as having closed the hazard.
+
 **The stamps had to move with the pointer** (C4/C13, same commit):
 `octbase_version` and all three ledger `app_version` values read `1.1.0`, a tag
 that exists only in the retired repo — against `octbase-app` it does not exist
