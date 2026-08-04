@@ -19,8 +19,8 @@ platform.
 
 | Working copy (host) | Git repo | Branch policy | What it is |
 |---|---|---|---|
-| `~/dev.ocete.ch` | `frasseck/octbase` | `release_vN` feature/release branches | **The application monorepo, development checkout.** Go API + desktop frontend + mobile SPA + shared JS + operations probe. Also the default `octbase_src` the client playbooks rsync from. |
-| `~/demo.ocete.ch` | `frasseck/octbase` | `main` only, deployed by `git pull` | **The public demo instance** — same repo, second checkout. Runs whatever is merged to `main`, with `OCTBASE_DEMO_MODE=true` (seeded demo logins by design). |
+| `~/dev.ocete.ch` | `frasseck/octbase-app` | `release_vN` feature/release branches | **The application monorepo, development checkout.** Go API + desktop frontend + mobile SPA + shared JS + operations probe. Also the default `octbase_src` the client playbooks rsync from. |
+| `~/demo.ocete.ch` | `frasseck/octbase-app` | `main` only, deployed by `git pull` | **The public demo instance** — same repo, second checkout. Runs whatever is merged to `main`, with `OCTBASE_DEMO_MODE=true` (seeded demo logins by design). |
 | `~/ocete.ch` | `frasseck/ocete` | `main` | **The marketing/landing site** — static no-build site + Go contact-form mailer. No dependency on the app. Carries the public pricing, privacy policy, terms and imprint. |
 | `~/octbase-service` | `frasseck/octbase-service` | `main` | **This repo** — client ledger, Ansible playbooks, fleet monitoring, host backup. Provisions one production stack per client. |
 
@@ -138,7 +138,7 @@ One concern, one owner — everything else should link, not copy:
 
 ## 6. Naming
 
-The **product** is *Octbase* (`frasseck/octbase`, `OCTBASE_*` env prefix,
+The **product** is *Octbase* (`frasseck/octbase-app`, `OCTBASE_*` env prefix,
 `oct-` account prefix, `octbase-*` unit names). The **domain/brand of the
 hosted platform** is *ocete.ch* (`frasseck/ocete`, subdomains per client).
 Directory names on the host follow the domain (`dev.ocete.ch`,

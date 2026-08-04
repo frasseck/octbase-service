@@ -90,7 +90,7 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 - The `bcrypt` Python module (`apt install python3-bcrypt`), to hash a client's
   initial admin password. Needed on a **first** deploy only; `create-instance.yml`
   fails with that instruction if it is missing.
-- SSH access to the app repo (`frasseck/octbase.git`): `create-instance.yml`
+- SSH access to the app repo (`frasseck/octbase-app.git`): `create-instance.yml`
   clones the release tag a client's `app_version` names into a cache on this
   machine (`octbase_release_cache`). The production host never talks to GitHub.
 - A checkout of the app repo at `octbase_src` — no longer the client deploy
