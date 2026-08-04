@@ -62,16 +62,26 @@ when the sync fails.
 
 ### B2 — Alerting actually reaches a human  *(~½ day)*
 
-The fleet monitor is designed but not live: `install-monitoring.yml` has
-never been run (no timer, `/usr/local/lib/octbase/` missing — register
-D13), `alert_email` is empty, and nothing external watches the sites. The
-cost of this is already visible: the legacy backup has been failing since
-2026-07-14 with nobody alerted.
+**Status 2026-08-04: steps 1–2 are now prepared in the repo; the blocker is the
+vault, and steps 3–4 are untouched.** The monitor *is* live and has been running
+every 5 minutes for weeks — the part that was never true is that anyone hears
+it. Re-measured during the OCT-32 review: `alert_email` was `""` **and the host
+had no `sendmail` binary at all**, and `monitor-all.sh` guards on both, silently.
+So step 1 as originally written — "set `alert_email`; verify the host can send
+mail" — would have been done by setting one variable and left the gap wide open.
+That is why the MTA is now installed by the playbook rather than assumed, and
+why an assert refuses to install a monitor whose alerting cannot work (register
+D28). State changes did always reach the journal; what was missing was any
+**push**.
 
-1. Set `alert_email` in `inventory/group_vars/all/main.yml`; verify the host can
-   send mail (`sendmail` path — the marketing SMTP relay can serve as
-   smarthost).
-2. `ansible-playbook playbooks/install-monitoring.yml`.
+1. ~~Set `alert_email`~~ **done** — `lars@beyags.com`, and
+   `install-monitoring.yml` now installs `msmtp`/`msmtp-mta` and templates
+   `/etc/msmtprc` from the same relay the client instances use.
+   **Blocked on B-vault:** `inventory/group_vars/all/vault.yml` still does not
+   exist (OCT-23), so `smtp_pass` is empty and the new pre-flight assert will
+   fail the play — deliberately. Create the vault, or run with
+   `-e alert_email=''` to reinstall the monitor with alerting off on purpose.
+2. `ansible-playbook playbooks/install-monitoring.yml --ask-vault-pass`.
 3. Point an external uptime service at `https://<site>/health` for demo and
    every client (the same endpoint the monitor probes) — external coverage
    catches DNS/edge/TLS failures the host cannot see about itself.

@@ -24,6 +24,12 @@
         - { path: "{{ clients_registry_dir }}", mode: "0755" }
         - { path: "{{ fleet_backup_root }}", mode: "0700" }
 
+    # The nightly loops over this registry and returns non-zero for any client
+    # it cannot back up. A stray entry therefore leaves the unit permanently
+    # `failed`, which is the only failure signal this job has (register D29).
+    - name: Every registry entry maps to a ledger client
+      ansible.builtin.include_tasks: tasks/assert-registry-matches-ledger.yml
+
     - name: Install backup-fleet.sh
       ansible.builtin.copy:
         src: ../backup/backup-fleet.sh

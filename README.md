@@ -642,6 +642,13 @@ must land **before the first paying client** — is
   `backup_offhost_cmd` is not configured yet — until an encrypted, versioned
   off-host destination is set, backups die with the disk they protect
   (readiness plan B1).
+- **Monitor alerting is armed but not firing**: `install-monitoring.yml` now
+  installs an MTA, templates the relay and refuses to install a monitor that
+  cannot alert (register D28), and `alert_email` is set. It stays inert until
+  `inventory/group_vars/all/vault.yml` supplies `vault_smtp_pass` (OCT-23) —
+  until then the playbook fails its pre-flight rather than installing something
+  that looks armed. State changes always reach the journal regardless; what is
+  missing is the push.
 - **Filesystem quotas**: `disk_quota_gb` is enforced only where the
   filesystem has `usrquota` enabled; on the current host it is monitor-only.
   Decide per host whether to enable `usrquota` on `/home`

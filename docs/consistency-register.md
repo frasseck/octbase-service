@@ -30,7 +30,7 @@ the live host (§2.4; the v1.0.5–v1.0.7 releases had skipped this checklist).
 | C8 | **Host port registry**: no client port may collide with the dev/demo/marketing stacks | live `.env` files of the three resident stacks | `RESERVED_PORTS` in `ledger.py` (allocation starts at 8110 regardless) |
 | C9 | **Isolation claim**: “all service ports bind to 127.0.0.1, only the edge is public” | [security concept §2](security-data-protection-concept.md) | `env.j2` (`127.0.0.1:<port>` — holds for clients) · dev/demo/marketing `.env` port values (**do not** hold, see D6) |
 | C10 | **Reserved client names**: `www dev mail api octbase admin` (`demo` unreserved 2026-07-11 — the public demo became a ledger-managed instance, `clients/demo.yml` + `migrate-instance.yml`) | `ledger.py` `RESERVED_NAMES` | `create-instance.yml` assert · `_example.yml.sample` comment |
-| C11 | **Postgres image**: all stacks and the backup restore-test use the same image, pinned to major `:18`; restore-test major version ≥ source (currently PG 18.4) | app `podman-compose.yml` | `backup-octbase.sh` `TEST_IMAGE` default · app README quick-start |
+| C11 | **Postgres image**: all stacks and the backup restore-test use the same image; the restore-test image is pinned to the **exact** server version (`:18.4`), not the `:18` major tag, and its major must be ≥ the source server's | app `podman-compose.yml` | `backup-octbase.sh` + `backup-fleet.sh` `TEST_IMAGE` defaults · **`backup_test_image` in `group_vars/all/main.yml`, which overrides both** (see D27) · app README quick-start |
 | C14 | **Built image names are per compose project** (`localhost/${COMPOSE_PROJECT_NAME}-api` …): two checkouts of the app repo on one host must never overwrite each other's image tags | app `podman-compose.yml` | dev (`octbase_dev`) vs demo (`octbase`) vs client (`octbase`, one per user namespace) builds |
 | C15 | **Edge proxy targets**: the root-managed edge Caddyfile's `reverse_proxy` targets must match how the stacks bind their frontend ports | `/etc/caddy/Caddyfile` (root) | `FRONTEND_PORT`/`WEB_PORT` values in the three resident `.env` files; currently the edge targets the host's **public IP**, so those three ports must stay on `0.0.0.0` (see §2.1) |
 | C12 | **Public claims = platform facts**: hosting location, data handling, feature/limit statements on `ocete.ch` | privacy policy / terms (legal texts) | marketing copy (features, pricing) · security concept · actual hosting |
@@ -875,6 +875,89 @@ re-runs, so no migration is needed.
 **Contract gap this exposed:** §3's C1 check only tests one direction — every
 `env.j2` key exists in `.env.example`. Both keys passed it. A key can be in
 both files and still be dead. The reverse check is now in the checklist below.
+
+## 2.14 Fleet safety mechanisms disabled by the config that ships them (2026-08-04)
+
+Three findings from the full-project review (OCT-32, filed as OCT-33/34 and a
+re-measurement of OCT-30). They are one pattern, not three coincidences: in each
+case the mechanism is present, correct and commented, and the configuration
+installed alongside it turns it off. A safety net whose default is "report
+success" is the failure mode worth naming.
+
+### D27 — `backup_test_image` overrode the restore-test pin (C11) — **fixed**
+
+Both backup scripts pin the restore-test Postgres to the **exact** server
+version and carry a comment explaining why a major-only tag is unsafe: a
+`:18` tag that is already cached never re-pulls, so it can fall behind the
+servers with nothing saying so.
+
+The pin never applied on the fleet. `backup-fleet.sh` sources
+`/etc/octbase/backup.conf` **before** its own `${TEST_IMAGE:-…:18.4}` default,
+and `install-backup.yml` writes that file from `backup_test_image`, which read
+`…/postgresql:18`. So the config shipped exactly the tag the code warned
+against, and the C11 guarantee — restore-test major ≥ source server — was
+unenforced on every client backup.
+
+The failure shape is on record: the claude-account job logged
+`ERROR: restore-test instance did not become ready` on 2026-08-02 under `:18`
+and produced **no dump that day**, then succeeded on 2026-08-04 under `:18.4`.
+
+**Resolution:** `backup_test_image` pinned to `…/postgresql:18.4` with the
+precedence spelled out at the setting, and C11's row above rewritten — it still
+described the retired "pinned to major `:18`" intent and named only
+`backup-octbase.sh`, so the register and the scripts disagreed about which was
+correct. The row now names `group_vars` as the value that actually wins.
+
+### D28 — the monitor could not deliver an alert (readiness B2) — **fixed in the repo, needs the vault**
+
+`monitor-all.sh` guards its only notification path with
+`[ -n "$ALERT_EMAIL" ] && command -v sendmail`. On the production host **both**
+halves were false: `alert_email` was `""`, and no `sendmail` binary existed at
+all. The second is the one that matters — setting `alert_email` alone would
+have looked like a fix and delivered nothing, because the guard degrades
+quietly. State changes did reach the journal (stderr, line 189), so this was
+never total invisibility; it was the absence of any **push** channel, with
+`SuccessExitStatus=1 2` also keeping a DEGRADED/DOWN fleet out of
+`systemctl --failed`.
+
+**Resolution:** `install-monitoring.yml` now installs `msmtp` + `msmtp-mta`
+(which provides `/usr/sbin/sendmail`) and templates `/etc/msmtprc` from the
+same `smtp_*` group_vars the client instances use, and `alert_email` is set.
+A pre-flight assert refuses to install a monitor whose alerting cannot work:
+either `alert_email` is deliberately empty, or a working relay must be
+configured. **Alerting stays inert until `vault.yml` exists** (OCT-23) — the
+relay rejects unauthenticated senders, so mail fails loudly rather than
+vanishing, which is the intended failure mode.
+
+### D29 — a hand-written registry entry poisoned every fleet job (re-measured) — **guard added; host fix needs root**
+
+`/etc/octbase/clients.d/dev.conf` names `oct-dev`, an account that has never
+existed: `dev.ocete.ch` deliberately does **not** follow the client
+service-setup standard (it runs under the `claude` account with systemd user
+units). The file predates the current registry — dated 2026-07-16, while
+`beyags.conf` and `demo.conf` were rewritten 2026-08-03 — and was never written
+by `create-instance.yml`, which is the only sanctioned writer.
+
+Consequences, measured 2026-08-04: `octbase-fleet-backup.service` sits in a
+permanent `failed` state (exit 1 since the entry appeared), and
+`status.json` reads `"overall":"DOWN"` while both real clients are OK. Reading
+`backup-fleet.sh`, the missing account hits a `continue`, so beyags and demo
+**are** still dumped and restore-tested — only the exit code is poisoned. That
+is the damage: with D28 open, the unit's exit code was the only failure signal
+the job had, and it was permanently red, so a genuine dump failure would have
+been indistinguishable from the standing noise.
+
+**Resolution (repo):** `install-monitoring.yml` and `install-backup.yml` now
+assert that every `clients.d/*.conf` maps to a ledger client, naming the strays
+and refusing to install otherwise — a hand-written registry file cannot drift in
+unnoticed again.
+**Resolution (host, root, not doable from this account):**
+`rm /etc/octbase/clients.d/dev.conf` then
+`systemctl start octbase-monitor.service`. Deleting is right rather than
+creating an `oct-dev` account: dev is not a managed client, and it already has
+its own backup — the claude-account `octbase-backup.timer` dumps it nightly with
+a passing restore test (database only, not attachments/`.env`, unlike the fleet
+job).
 
 ## 3. Review checklist (run per release, ~10 minutes)
 

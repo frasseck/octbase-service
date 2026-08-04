@@ -112,18 +112,45 @@ disk_alert_pct: 90
 fleet_backup_root: /var/backups/octbase/fleet
 # Days to keep nightly per-client backups.
 backup_retention_days: 14
-# Postgres image for the mandatory restore test — major version must be >=
-# the clients' server major (contract C11; keep in step with the app compose).
-backup_test_image: "registry.access.redhat.com/hi/postgresql:18"
+# Postgres image for the mandatory restore test — major version must be >= the
+# clients' server major (contract C11; keep in step with the app compose).
+#
+# Pinned to the EXACT version the client stacks run, not the major tag. This
+# value is written into /etc/octbase/backup.conf, which backup-fleet.sh sources
+# BEFORE applying its own default — so whatever stands here wins, and until
+# 2026-08-04 it was ":18", silently overriding the exact pin both backup scripts
+# had deliberately adopted (and documented at length). A floating major tag that
+# is already cached never re-pulls, so it can fall behind the servers without
+# anything saying so, and the guarantee C11 exists to make — restore client >=
+# source server — quietly stops holding. The claude-account job showed the shape
+# of that failure on 2026-08-02: "restore-test instance did not become ready",
+# and no dump for that day.
+#
+# Bump this together with the server upgrade, not after it.
+backup_test_image: "registry.access.redhat.com/hi/postgresql:18.4"
 # Optional off-host sync, run after every backup (its failure fails the run) —
 # e.g. "rclone sync /var/backups/octbase/fleet crypt-remote:octbase-backups".
 # Empty disables the sync (readiness plan B1 stays open until this is set).
 backup_offhost_cmd: ""
 
 # ── Monitoring ────────────────────────────────────────────
-# Mail recipient for state-change alerts ("" disables mail; state changes are
-# always logged to the journal). Requires a working sendmail on the host.
-alert_email: ""
+# Mail recipient for state-change alerts. "" disables mail deliberately; state
+# changes are always logged to the journal either way.
+#
+# Two things have to be true for an alert to arrive, and until 2026-08-04
+# neither was: this had to name a recipient, and the host had to have a
+# `sendmail`. There was no MTA at all, so setting only this would have read as
+# a fix and delivered nothing — monitor-all.sh probes for the binary and skips
+# silently when it is missing (register D28). install-monitoring.yml now
+# installs msmtp and asserts the relay is usable, so the half-configured state
+# cannot be installed.
+#
+# Mail goes through the same relay as client transactional mail, whose password
+# lives in the vault. Until vault.yml exists (OCT-23) install-monitoring.yml
+# will REFUSE to run with this set — deliberately: the alternative is a monitor
+# that looks armed and is not. Opt out explicitly with -e alert_email='' if you
+# need to reinstall the monitor before the vault is in place.
+alert_email: "lars@beyags.com"
 # Also probe https://<name>.<base_domain>/health through the public edge
 # (global default; a client whose DNS/edge is still pending can opt out via
 # monitor_edge_probe: false in its ledger file).
