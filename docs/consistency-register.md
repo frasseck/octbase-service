@@ -959,6 +959,58 @@ its own backup — the claude-account `octbase-backup.timer` dumps it nightly wi
 a passing restore test (database only, not attachments/`.env`, unlike the fleet
 job).
 
+### D30 — the edge access log held every tenant's bearer tokens (2026-08-04) — **fixed in the repo; needs a reload**
+
+Found while answering a question about `clients.d/dev.conf`, not by looking for
+it. Filed as OCT-38.
+
+`/var/log/caddy/access.log`, measured on the host: 79 MB, 43,674 requests since
+2026-07-23, mode **`0644`**, **no logrotate config anywhere**. Of those requests
+**692 carry a credential in the URI** — 361 `beyags.ocete.ch`, 296
+`dev.ocete.ch`, 35 `demo.ocete.ch`. The SPA opens its SSE stream as
+`?token=<access token>` because `EventSource` cannot set an `Authorization`
+header, and Caddy logs the request line verbatim. Access tokens live 15 minutes,
+so old entries are inert; the exposure is continuous, since anything that can
+read the file harvests current sessions. On a host where every tenant has a
+local account, world-readable is cross-tenant.
+
+**The mechanism is worth writing down, because the obvious reading is wrong.**
+`beyags.caddy` and `demo.caddy` contain no `log` directive, and adapting the
+on-disk config confirms Caddy would put both in the server's `skip_hosts`. They
+are logged anyway. The running config, read from the admin API, maps
+`beyags.ocete.ch → log2` and `demo.ocete.ch → log3`: **Caddy is serving a
+configuration that no file on disk describes.** It has been up since
+2026-08-02 14:50, while Ansible rewrote `beyags.caddy` at 2026-08-03 19:02 and
+`demo.caddy` at 18:47 — and nothing reloads the edge. `create-instance.yml`
+wrote the snippet and left "reload it" as a line of advice in a debug message.
+
+So there were two defects: a template that logged credentials, and a delivery
+path that never applied template changes at all. Fixing only the first would
+have produced a correct file and no change in behaviour.
+
+**Resolution:**
+- `caddy-vhost.j2` gains a `log` block with Caddy's `query` filter replacing
+  `token`, `code` and `state` with `REDACTED`. Verified against the edge's own
+  Caddy 2.6.2 — `caddy adapt` accepts the filter, and a live throwaway server
+  logged `?size=20&token=REDACTED` and `?code=REDACTED&state=REDACTED` with zero
+  occurrences of the secrets sent. Keep the parameter list in step with
+  `sensitiveQueryParams` in the app's `internal/shared/logredact.go`, which does
+  the same job for the API's own log (app PR #19).
+- Not having a `log` block is not the safe default it looks like: it means no
+  edge access log for client traffic at all. The template now makes the choice
+  explicitly, and makes it a redacting one.
+- `create-instance.yml` notifies a **Reload edge Caddy** handler — `caddy
+  validate` first, since a bad snippet on the shared edge would take every
+  tenant down, then a graceful `systemctl reload`.
+- `install-monitoring.yml` installs `/etc/logrotate.d/caddy` (daily, 14 days,
+  matching `backup_retention_days`, `create 0640`) and tightens the existing
+  file's mode.
+
+**Still needed on the host (root):** `systemctl reload caddy` — on its own that
+stops client-token logging immediately, because the on-disk vhosts currently
+say `skip_hosts`. The 79 MB of already-logged tokens are expired but should not
+linger: rotate or truncate, and `chmod 0640`.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash

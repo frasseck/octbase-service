@@ -547,6 +547,14 @@
         src: caddy-vhost.j2
         dest: "{{ edge_snippet_dir }}/{{ client }}.caddy"
         mode: "0644"
+      # Writing the file was never enough: Caddy serves the config it loaded,
+      # and nothing here reloaded it. Measured 2026-08-04 (register D30) — the
+      # edge had been running a config no file on disk described since
+      # 2026-08-03 19:02, because Ansible rewrote beyags.caddy and demo.caddy
+      # while Caddy had been up since 2026-08-02 14:50. The visible symptom was
+      # that both clients kept writing access logs their on-disk vhosts said to
+      # skip, tokens included. A template fix that is never loaded is not a fix.
+      notify: Reload edge Caddy
 
     - name: Manual follow-up steps
       ansible.builtin.debug:
@@ -581,3 +589,22 @@
         scope: user
         daemon_reload: true
         state: restarted
+
+    # Validate before reloading: this is the shared edge, so a broken snippet
+    # would take every tenant's vhost down at once, not just this client's.
+    # `caddy validate` parses the whole imported set and fails without touching
+    # the running server; the reload itself is graceful (no dropped connections)
+    # and is a no-op for every vhost whose file did not change.
+    # Two handlers on one topic rather than a block: handlers run in definition
+    # order for a `listen` topic, so validation always precedes the reload.
+    - name: Validate the edge configuration
+      listen: Reload edge Caddy
+      ansible.builtin.command:
+        cmd: caddy validate --config /etc/caddy/Caddyfile
+      changed_when: false
+
+    - name: Reload the edge
+      listen: Reload edge Caddy
+      ansible.builtin.systemd_service:
+        name: caddy
+        state: reloaded

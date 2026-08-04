@@ -89,6 +89,20 @@ Mapped to RiLi-Webservices sections and the Merkblatt.
 - Security audit log (admin actions, sign-ins) with source IP and user agent.
 - Automatic GDPR/revDSG retention purge (audit + activity default 365 days,
   expired tokens/invitations), configurable per deployment.
+- **Edge access log** (`/var/log/caddy/access.log`): per-request record for
+  every tenant, containing client IP, URI and user agent. Rotated daily and
+  kept **14 days** (`/etc/logrotate.d/caddy`, installed by
+  `install-monitoring.yml`), mode `0640` so one tenant's local account cannot
+  read another's. Until 2026-08-04 it had **no rotation and no retention limit**
+  and was mode `0644` — corrected together with the credential leak below
+  (register D30).
+- **No credential is written to any log.** URL-borne credentials are redacted
+  at both layers that see a request line: the edge vhost template strips
+  `token`, `code` and `state` from the logged URI, and the API does the same in
+  `octbase-api/internal/shared/logredact.go`. This is a rule with teeth rather
+  than an aspiration — it was violated by both layers until 2026-08-04, when the
+  SSE `?token=` fallback was found writing live access tokens to both. Adding a
+  URL-borne credential means adding it to both lists.
 
 ## 4. Backup & restore concept (Datensicherungskonzept) — RiLi 12.3, Merkblatt §4
 

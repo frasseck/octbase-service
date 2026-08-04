@@ -121,6 +121,27 @@
           EDGE_PROBE={{ '1' if (edge_probe | bool) else '0' }}
           DISK_ALERT_PCT={{ disk_alert_pct }}
 
+    # Host hygiene rather than monitoring proper, but this is the per-host
+    # playbook and the log is part of the fleet's observability surface: the
+    # edge access log had no rotation at all and stood at 79 MB over 12 days,
+    # world-readable, on a host where every tenant has a local account
+    # (register D30).
+    - name: Rotate and lock down the edge access log
+      ansible.builtin.copy:
+        src: ../monitoring/caddy-logrotate
+        dest: /etc/logrotate.d/caddy
+        mode: "0644"
+
+    - name: Tighten the existing edge access log
+      ansible.builtin.file:
+        path: /var/log/caddy/access.log
+        mode: "0640"
+        owner: caddy
+        group: caddy
+      # The logrotate `create` line only governs files it creates from now on;
+      # the one already on disk keeps its old mode until told otherwise.
+      failed_when: false
+
     - name: Install systemd units
       ansible.builtin.copy:
         src: "../monitoring/{{ item }}"

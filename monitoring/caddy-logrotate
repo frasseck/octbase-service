@@ -1,0 +1,31 @@
+# Managed by octbase-service / install-monitoring.yml
+#
+# The edge Caddy's access log had no rotation at all: measured 2026-08-04 it
+# stood at 79 MB covering 12 days and growing without bound (register D30).
+# Size is the lesser problem. The file is the platform's per-request record for
+# every tenant, so "keeps everything forever" is also a data-protection
+# position nobody took deliberately — and until the vhost templates started
+# redacting, every SSE access token that had ever crossed the edge was still
+# sitting in it.
+#
+# 14 days matches backup_retention_days, so the two windows on this host agree.
+/var/log/caddy/*.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    # 0640, not the 0644 the file had: it is readable by every local account
+    # otherwise, and on a multi-tenant host that means one tenant's account can
+    # read every other tenant's request log.
+    create 0640 caddy caddy
+    su caddy caddy
+    sharedscripts
+    postrotate
+        # Caddy keeps writing to the rotated inode until told otherwise. USR1
+        # is its documented log-reopen signal; the unit's own reload would also
+        # work but is heavier than this needs to be.
+        /bin/systemctl kill --signal=USR1 caddy.service 2>/dev/null || true
+    endscript
+}
