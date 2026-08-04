@@ -110,7 +110,7 @@ See `ledger/clients/_example.yml.sample` for the full field reference:
 ```yaml
 name: acme                 # → acme.ocete.ch, Linux user oct-acme
 display_name: ACME GmbH
-contact: it@acme.example
+contact: it@acme.example   # also the login of the first SUPER_ADMIN (see below)
 edition: business          # team | business | enterprise
 jira_import: true          # add-on, booked by default; only honored for business
 max_users: 25              # → OCTBASE_MAX_USERS
@@ -169,9 +169,21 @@ initial administrator, and prints the credentials as its last output:
 
 ```
 Initial SUPER_ADMIN for acme.ocete.ch — shown once, not recoverable:
-  login:    admin@acme.ocete.ch
+  login:    it@acme.example
   password: <24 random characters>
 ```
+
+**The login is the ledger's `contact`.** That address has to be a real mailbox
+the client can read: it is the only account on a fresh instance, and the app's
+self-service password reset is the only way back into it. (It used to be
+`admin@acme.ocete.ch` — an address on the client's own subdomain, with no
+mailbox and no MX record behind it, so the recovery path went nowhere.) A
+missing or malformed `contact` fails `ledger.py validate` for any `active`
+client, and the playbook refuses before it builds anything.
+
+Only a **first** deploy consumes it. Editing `contact` afterwards changes the
+billing/ops contact and nothing else — an instance keeps the admin login it was
+created with. To change that login later, rename the user in the app.
 
 It generates the password on the admin machine, writes only its **bcrypt hash**
 into the client's `.env` (`OCTBASE_BOOTSTRAP_ADMIN_EMAIL` /
@@ -195,8 +207,9 @@ playbook — the `.env` still holds the *old* hash, so re-bootstrapping would ju
 restore the password you no longer have. On the client's host, as `oct-<name>`:
 hash a new password, put it in `~/octbase/.env` as
 `OCTBASE_BOOTSTRAP_ADMIN_PASSWORD_HASH`, delete the admin row
-(`podman exec octbase_postgres_1 psql -U octbase -d octbase -c "DELETE FROM users WHERE email = 'admin@acme.ocete.ch'"`),
-then `systemctl --user restart octbase`.
+(`podman exec octbase_postgres_1 psql -U octbase -d octbase -c "DELETE FROM users WHERE email = 'it@acme.example'"`
+— the address in `OCTBASE_BOOTSTRAP_ADMIN_EMAIL`), then
+`systemctl --user restart octbase`.
 
 ### Change a client's configuration (edition, add-on, version, seats)
 

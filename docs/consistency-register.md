@@ -732,6 +732,58 @@ discovery is scoped to the `io.podman.compose.service=postgres` label so an
 unrelated exited container named `*postgres*` cannot fail the nightly, and
 both prunes sweep emptied per-client directories after files age out.
 
+## 2.11 The bootstrap admin's email, and two `.env` keys that never applied (2026-08-04)
+
+**The first SUPER_ADMIN had an undeliverable login.** `create-instance.yml`
+hardcoded `admin@<client>.<base_domain>` — an address on the client's own
+subdomain, which has no mailbox and no MX record. Since that account is the
+only way into a fresh instance, and the app's self-service reset is the only
+way to recover it, the recovery path terminated at an address nobody can read.
+It now comes from the ledger's `contact`, which is a real address by
+definition. Consequences worth knowing:
+
+- **First deploy only.** The app consumes the bootstrap keys once, while the
+  users table is empty, and `.env` is written `force: false`. Changing a
+  ledger `contact` later moves the billing/ops contact and nothing else —
+  existing instances keep the admin they were born with. `beyags` and `demo`
+  therefore still have `admin@<name>.ocete.ch` logins.
+- **A blank contact is now a stop, not a gap** (C3). It used to be
+  cosmetic; it now decides whether a stack can be logged into. `env.j2` writes
+  the email only when the hash is set, so a blank contact would have produced a
+  half-configured bootstrap — blank email, real hash — which the API rejects at
+  startup on an empty installation. That would build, deploy, and *then*
+  crash-loop. Guarded twice: `ledger.py validate` errors for any `active`
+  client (warns for suspended/removed, which keep their files as history), and
+  the playbook asserts before the image build. `ledger.py new` requires
+  `--contact` for the same reason — its scaffold writes `status: active`.
+- **`educaswiss.yml` fails the new rule** (`contact: ''`). Pre-existing and
+  already recorded in its own `notes:` — never provisioned, no account, no DNS,
+  `status: active` regardless. The rule surfaces it rather than creating it;
+  resolving it is a business decision (supply a contact, or set
+  `status: suspended`).
+
+**Two `.env` keys could never have applied** (C1/C2), found while auditing the
+same file. Neither compose file declares `env_file:`, so `.env` reaches a
+container *only* by being interpolated as `${NAME}`:
+
+- `PORT=8000` — not interpolated anywhere. The API's own fallback is 8000
+  (`cmd/octbase-api/main.go`), so behaviour was always correct; the line read
+  as though a client's API port were configurable, which it is not.
+- `OCTBASE_ATTACHMENTS_DIR=/data/attachments` — both `podman-compose.yml` and
+  `podman-compose.client.yml` assign the literal value, matching the volume
+  mount, so the `.env` line was shadowed.
+
+Both removed from `env.j2`, with the reasoning kept in place so they are not
+re-added. `OCTBASE_SECURE_COOKIES=true` is a third of the same kind and was
+**kept**: the client override hardcodes `"true"`, so the `.env` line cannot
+turn it off — the redundancy is the point. Existing clients' `.env` files still
+carry the two dead keys; they are inert, and the template is not rewritten on
+re-runs, so no migration is needed.
+
+**Contract gap this exposed:** §3's C1 check only tests one direction — every
+`env.j2` key exists in `.env.example`. Both keys passed it. A key can be in
+both files and still be dead. The reverse check is now in the checklist below.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash
@@ -739,6 +791,14 @@ both prunes sweep emptied per-client directories after files age out.
 # (accept commented-out optional keys like #OCTBASE_OPTION_JIRA_IMPORT=true)
 grep -oE '^OCTBASE_[A-Z_]+' playbooks/templates/env.j2 | sort -u \
   | while read k; do grep -qE "^#?$k=" $OCTBASE_SRC/.env.example || echo "MISSING in .env.example: $k"; done
+
+# C1/C2, the other direction (§2.11) — a key can be in BOTH files and still be
+# dead. Neither compose file uses env_file:, so .env reaches a container only
+# via ${NAME} interpolation. Anything listed here is written but never applied.
+grep -oE '^[A-Z][A-Z0-9_]*' playbooks/templates/env.j2 | sort -u > /tmp/env-keys
+cat $OCTBASE_SRC/podman-compose.yml playbooks/files/podman-compose.client.yml \
+  | grep -oE '\$\{[A-Z][A-Z0-9_]*' | tr -d '${' | sort -u > /tmp/interp-keys
+comm -23 /tmp/env-keys /tmp/interp-keys   # expect: no output
 
 # C4/C13 — every stamp in this repo: tagged, changelogged, and how far behind
 scripts/check-version-drift.py            # WARN = pinned behind, FAIL = broken stamp

@@ -15,7 +15,15 @@
     home_dir: "/home/{{ linux_user }}"
     app_dir: "{{ home_dir }}/{{ client_app_subdir }}"
     fqdn: "{{ client }}.{{ base_domain }}"
-    admin_email: "admin@{{ client }}.{{ base_domain }}"
+    # Login of the instance's first SUPER_ADMIN, from the ledger. This used to
+    # be "admin@{{ client }}.{{ base_domain }}" — an address on the client's own
+    # subdomain, which has no mailbox anywhere and no MX record, so the one
+    # account that can administer the instance could never receive a password
+    # reset. The ledger's contact is a real address by definition, and it is
+    # already the person being onboarded. Play vars are evaluated lazily, so
+    # referring to client_ledger here is fine: it is set in pre_tasks, long
+    # before the .env template and the credential printout use this.
+    admin_email: "{{ client_ledger.contact | default('') | trim | lower }}"
 
   pre_tasks:
     - name: Load client ledger entry
@@ -317,6 +325,32 @@
           it would ignore the OCTBASE_BOOTSTRAP_ADMIN_* keys and come up with no
           way to log in. Point octbase_src at a release that includes the admin
           bootstrap and re-run.
+      when: needs_admin | bool
+
+    # The ledger's contact becomes the first SUPER_ADMIN's login, so a blank or
+    # malformed one is a provisioning stop, not a cosmetic gap: env.j2 writes the
+    # email only when the hash is set, so a blank contact produces a
+    # half-configured bootstrap (blank email + real hash) and the API refuses to
+    # start on the still-empty installation — a stack that builds, deploys and
+    # then crash-loops. Failing here instead costs nothing: this is still ahead
+    # of the image build.
+    #
+    # Deliberately gated on needs_admin rather than asserted in the pre_tasks
+    # block with the rest of the ledger checks. Only a FIRST deploy consumes the
+    # address; on every later run the .env already exists and is not rewritten,
+    # and an existing client must stay updatable (seats, edition, version) even
+    # if nobody ever filled its contact in. `ledger.py validate` is the loud
+    # repo-side check for that case.
+    - name: The ledger contact must be a usable email address
+      ansible.builtin.assert:
+        that: admin_email is match('^[^@\s]+@[^@\s]+\.[^@\s]+$')
+        fail_msg: >-
+          ledger/clients/{{ client }}.yml has contact
+          '{{ client_ledger.contact | default('') }}', which is not an email
+          address. It becomes the login of this instance's first SUPER_ADMIN —
+          the only way into {{ fqdn }} — so it must be a real, deliverable
+          mailbox the client can receive a password reset at. Set it, run
+          ./ledger/ledger.py validate, commit, and re-run.
       when: needs_admin | bool
 
     # 24 chars from [A-Za-z0-9]: clears the app's 12-char minimum and its

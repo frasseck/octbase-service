@@ -8,6 +8,11 @@
 # (www, dev, mail, api, octbase, admin).
 name: acme
 display_name: ACME GmbH
+# Required for an active client, and not just a record: create-instance.yml
+# makes this the login of the instance's first SUPER_ADMIN — the only way into
+# a fresh stack — so it must be a real mailbox that can receive a password
+# reset. Consumed on the first deploy only; editing it later changes the
+# contact, not the admin account.
 contact: it@acme.example
 
 # Booked product: team | business | enterprise (→ OCTBASE_EDITION).

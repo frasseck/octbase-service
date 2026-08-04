@@ -40,6 +40,13 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,26}[a-z0-9]$")
 RESERVED_NAMES = {"www", "dev", "mail", "api", "octbase", "admin"}
 EDITIONS = {"team", "business", "enterprise"}
 STATUSES = {"active", "suspended", "removed"}
+# The contact is not just a record: create-instance.yml makes it the login of
+# the instance's first SUPER_ADMIN, which is the only way into a fresh stack.
+# So it has to be a real mailbox that can receive a password reset, and a blank
+# one is a provisioning stop rather than a missing nicety. Deliberately a shape
+# check, not RFC 5322 — it catches "", "tbd" and "lars at beyags.com", which is
+# what actually goes wrong; nothing offline can prove deliverability.
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # Ports already used by the dev/demo/marketing stacks on the host
 # (8025/8026 are the dev/demo Mailpit UI ports of the dev overlay; 8120 is
 # the oct-web marketing site, scripts/migrate-ocete-web.sh — it sits inside
@@ -128,6 +135,13 @@ def next_port_block(clients):
 def cmd_new(args):
     if not NAME_RE.match(args.name) or args.name in RESERVED_NAMES:
         sys.exit(f"invalid or reserved name: {args.name!r}")
+    # Checked here as well as in validate: the scaffold writes status 'active',
+    # so accepting a blank contact would mint a file that validate rejects on
+    # the very next command.
+    contact = (args.contact or "").strip()
+    if not EMAIL_RE.match(contact):
+        sys.exit(f"--contact must be an email address (got {contact!r}) — it "
+                 f"becomes the login of the instance's first SUPER_ADMIN")
     path = CLIENTS_DIR / f"{args.name}.yml"
     if path.exists():
         sys.exit(f"{path} already exists")
@@ -148,7 +162,7 @@ def cmd_new(args):
     entry = {
         "name": args.name,
         "display_name": args.display or args.name,
-        "contact": args.contact or "",
+        "contact": contact,
         "edition": args.edition,
         "jira_import": jira_import,
         "max_users": args.max_users,
@@ -216,6 +230,21 @@ def cmd_validate(_args):
             errors.append(f"{where}: edition must be one of {sorted(EDITIONS)}")
         if c.get("status") not in STATUSES:
             errors.append(f"{where}: status must be one of {sorted(STATUSES)}")
+        # Only 'active' entries are deployable, and only a FIRST deploy consumes
+        # the contact (create-instance writes it as the bootstrap admin's login
+        # and never rewrites an existing .env). A suspended or removed client
+        # keeps its file as the historical record, so an old entry that predates
+        # this rule is not retroactively broken — it is warned about instead.
+        contact = str(c.get("contact") or "").strip()
+        if c.get("status") == "active":
+            if not EMAIL_RE.match(contact):
+                errors.append(
+                    f"{where}: contact {contact!r} is not an email address — it "
+                    f"becomes the login of the instance's first SUPER_ADMIN "
+                    f"(create-instance.yml), so an active client needs a real "
+                    f"mailbox that can receive a password reset")
+        elif contact and not EMAIL_RE.match(contact):
+            warnings.append(f"{where}: contact {contact!r} is not an email address")
         if not isinstance(c.get("max_users"), int) or c["max_users"] < 1:
             errors.append(f"{where}: max_users must be a positive integer")
         if not isinstance(c.get("jira_import"), bool):
@@ -284,7 +313,9 @@ def main():
     p_new = sub.add_parser("new", help="scaffold a new client file")
     p_new.add_argument("name")
     p_new.add_argument("--display", help="display name (company)")
-    p_new.add_argument("--contact", help="contact email")
+    p_new.add_argument("--contact", required=True,
+                       help="contact email — also the login of the instance's "
+                            "first SUPER_ADMIN, so it must be a real mailbox")
     p_new.add_argument("--edition", choices=sorted(EDITIONS), required=True)
     p_new.add_argument("--jira-import", action=argparse.BooleanOptionalAction,
                        default=None,
