@@ -787,9 +787,31 @@ SPA shell statically regardless of API state — probe `/api/v1/health`, never
 reporting `00:00` elapsed on repeated `ps` checks while postgres and frontend
 sit at minutes. The gap — that a known-fatal, precisely detectable
 precondition surfaces as a 150-second unnamed health-gate timeout instead of a
-pre-flight assert — is filed as OCT-19 and is **not** fixed. It now matters
+pre-flight assert — is filed as OCT-19. It now matters
 mainly for restore-from-backup: `backup-fleet.sh` keeps 14 days, so
 pre-squash dumps are on disk and restoring one reintroduces the outage.
+
+**OCT-19 fixed the same day (C13/C13b).** `sync-instance.yml` and
+`set-version.yml` now read `schema_migrations` from the client's database and
+refuse if the recorded version has no matching file in the tree about to be
+deployed. Both checks sit **after** the admin-machine fetch and **before** the
+rsync, so a refusal leaves the instance untouched and still serving its old
+code — the opposite of the incident, where the instance was already rebuilt by
+the time anything complained. The message names both versions and points at the
+stamping procedure instead of reading as a health timeout.
+
+Deliberately advisory when the query fails: a stopped stack or a database still
+starting cannot prove anything either way, and refusing there would block the
+very deploy that repairs them. The guard only fires on a version positively
+read. Matching logic verified against the real cases — post-squash tree with a
+database at 38 refuses (the outage), at 2 passes (the fleet today), a
+pre-squash tree at 38 passes, and `020_` is not mistaken for version 2.
+
+This does not make the app-side guard redundant: the API's own legible failure
+(app branch `fix/migration-version-ahead-guard`) covers every other way a stack
+starts — a restored backup, a hand-run `podman-compose up`, a reboot. The
+playbook guard stops the deploy that *causes* the state; the API guard explains
+it whenever it happens anyway.
 
 ## 2.13 The bootstrap admin's email, and two `.env` keys that never applied (2026-08-04)
 

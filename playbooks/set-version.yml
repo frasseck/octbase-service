@@ -134,6 +134,73 @@
         depth: 1
         force: true
 
+    # ── Pre-flight: the DB must not be ahead of the migrations being deployed ─
+    # Same guard as sync-instance.yml, and for the same incident — see the long
+    # comment there. It bites harder on this play: a version deploy is exactly
+    # when the migration set changes underneath a database, and the 001_baseline
+    # squash means a client recorded at 38/39 cannot start on any tag after it.
+    # Runs BEFORE the rsync, so a refusal leaves the instance on its old code.
+    - name: Read the migration versions the release ships
+      delegate_to: localhost
+      run_once: true
+      become: false
+      ansible.builtin.find:
+        paths: "{{ octbase_release_cache }}/octbase-api/migrations"
+        patterns: "*.up.sql"
+      register: release_migrations
+
+    - name: Read the schema version the client's database records
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.command:
+        argv:
+          - podman
+          - exec
+          - octbase_postgres_1
+          - psql
+          - -U
+          - octbase
+          - -d
+          - octbase
+          - -tAc
+          - SELECT version FROM schema_migrations
+      register: db_schema_version
+      changed_when: false
+      failed_when: false
+
+    # Advisory when unreadable, for the reasons given in sync-instance.yml: a
+    # stopped stack or a database still starting cannot prove anything either way.
+    - name: Note when the schema version could not be read
+      ansible.builtin.debug:
+        msg: >-
+          Could not read schema_migrations from {{ linux_user }}'s database
+          ({{ db_schema_version.stderr | default('') | trim | default('no output', true) }}).
+          Skipping the migration pre-flight — if the API fails to start after
+          this run, check whether its recorded version still has a migration
+          file (docs/operations.md, baseline stamping).
+      when: db_schema_version.rc != 0 or (db_schema_version.stdout | default('') | trim) == ''
+
+    - name: The database's recorded migration must exist in the release
+      vars:
+        recorded: "{{ db_schema_version.stdout | trim }}"
+        shipped: "{{ release_migrations.files | map(attribute='path') | map('basename') | list }}"
+      ansible.builtin.assert:
+        that:
+          - shipped | select('match', '^0*' ~ recorded ~ '_') | list | length > 0
+        fail_msg: >-
+          REFUSING TO DEPLOY: {{ client }}'s database records migration version
+          {{ recorded }}, and release {{ release_tag }} ships no migration file
+          for it ({{ shipped | sort | join(', ') }}). The API would not start —
+          golang-migrate cannot plan from a version it has no file for, and the
+          stack would crash-loop without binding a port. Stamp the database to
+          the baseline first (app repo docs/operations.md and
+          octbase-operations/stamp-baseline.sh), then re-run. Nothing has been
+          changed on the instance.
+        success_msg: >-
+          Migration pre-flight OK — database at version {{ recorded }}, and
+          release {{ release_tag }} ships a file for it.
+      when: db_schema_version.rc == 0 and (db_schema_version.stdout | default('') | trim) != ''
+
     - name: Sync the release source into the client account
       ansible.posix.synchronize:
         src: "{{ octbase_release_cache }}/"

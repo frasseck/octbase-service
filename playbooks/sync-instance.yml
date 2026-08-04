@@ -122,6 +122,84 @@
         refspec: "+refs/heads/{{ octbase_branch }}:refs/remotes/origin/{{ octbase_branch }}"
       register: appclone
 
+    # ── Pre-flight: the DB must not be ahead of the migrations being deployed ─
+    # On 2026-08-04 a sync of demo took its API down and beyags with it. App
+    # commit 56827b4 squashed migrations 001-039 into 001_baseline, so a database
+    # recorded at version 38/39 has no file for its version, golang-migrate
+    # cannot build a plan, and the API exits — it crash-loops without ever
+    # binding a port. The failure surfaced 150 seconds later as this play's
+    # "Wait for API health" timing out, which names nothing useful, and
+    # golang-migrate's own message ("no migration found for version 38: read
+    # down for version 38") reads like a corrupt file rather than a database
+    # from before a history rewrite.
+    #
+    # A known-fatal, precisely detectable precondition belongs in a pre-flight,
+    # not a post-hoc timeout. This runs BEFORE the rsync, so a refusal leaves
+    # the instance exactly as it was — still serving on its old code.
+    - name: Read the migration versions the branch ships
+      delegate_to: localhost
+      run_once: true
+      become: false
+      ansible.builtin.find:
+        paths: "{{ octbase_git_cache }}/octbase-api/migrations"
+        patterns: "*.up.sql"
+      register: branch_migrations
+
+    - name: Read the schema version the client's database records
+      become_user: "{{ linux_user }}"
+      environment: "{{ user_env }}"
+      ansible.builtin.command:
+        argv:
+          - podman
+          - exec
+          - octbase_postgres_1
+          - psql
+          - -U
+          - octbase
+          - -d
+          - octbase
+          - -tAc
+          - SELECT version FROM schema_migrations
+      register: db_schema_version
+      changed_when: false
+      failed_when: false
+
+    # Deliberately advisory when the query fails: a stopped stack, a database
+    # still starting, or a first-ever sync are all states where nothing can be
+    # proven, and refusing there would block the very deploy that fixes them.
+    # The assert below only fires on a version we positively read.
+    - name: Note when the schema version could not be read
+      ansible.builtin.debug:
+        msg: >-
+          Could not read schema_migrations from {{ linux_user }}'s database
+          ({{ db_schema_version.stderr | default('') | trim | default('no output', true) }}).
+          Skipping the migration pre-flight — if the API fails to start after
+          this run, check whether its recorded version still has a migration
+          file (docs/operations.md, baseline stamping).
+      when: db_schema_version.rc != 0 or (db_schema_version.stdout | default('') | trim) == ''
+
+    - name: The database's recorded migration must exist in the branch
+      vars:
+        recorded: "{{ db_schema_version.stdout | trim }}"
+        shipped: "{{ branch_migrations.files | map(attribute='path') | map('basename') | list }}"
+      ansible.builtin.assert:
+        that:
+          - shipped | select('match', '^0*' ~ recorded ~ '_') | list | length > 0
+        fail_msg: >-
+          REFUSING TO SYNC: {{ client }}'s database records migration version
+          {{ recorded }}, and branch '{{ octbase_branch }}' ships no migration
+          file for it ({{ shipped | sort | join(', ') }}). The API would not
+          start — golang-migrate cannot plan from a version it has no file for,
+          and the stack would crash-loop without binding a port, taking the
+          instance down. This is the 001_baseline squash: stamp the database to
+          the baseline first (procedure in the app repo's docs/operations.md and
+          octbase-operations/stamp-baseline.sh), then re-run this play. Nothing
+          has been changed on the instance.
+        success_msg: >-
+          Migration pre-flight OK — database at version {{ recorded }}, and
+          branch '{{ octbase_branch }}' ships a file for it.
+      when: db_schema_version.rc == 0 and (db_schema_version.stdout | default('') | trim) != ''
+
     - name: Sync application source into the client account
       ansible.posix.synchronize:
         src: "{{ octbase_git_cache }}/"
