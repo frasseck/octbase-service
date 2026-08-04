@@ -46,6 +46,7 @@ ansible-playbook playbooks/remove-instance.yml -e client=<name> -e confirm=<name
 ansible-playbook playbooks/migrate-instance.yml -e client=<name>   # move an installation on ONE host (prompts for the source)
 ansible-playbook playbooks/migrate-host.yml -e client=<name> -e source_host=<old> -e confirm=<name>  # move to ANOTHER host (ledger host: = target)
 ansible-playbook playbooks/suspend-instance.yml -e client=<name> -e confirm=<name>  # ledger status must be 'suspended'
+ansible-playbook playbooks/reset-user-password.yml -e client=<name> -e email=<user>  # reset one app user's password in the DB; prints it once
 ansible-playbook playbooks/set-max-users.yml -e client=<name>
 ansible-playbook playbooks/set-resources.yml -e client=<name>     # apply memory/CPU/tasks caps + disk quota, no redeploy
 ansible-playbook playbooks/set-version.yml -e client=<name>       # deploy the ledger's app_version tag, stamp + verify via /api/v1/version
