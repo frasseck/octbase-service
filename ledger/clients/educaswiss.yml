@@ -5,17 +5,23 @@ edition: business
 jira_import: true
 max_users: 10
 registered: '2026-07-16'
-status: active
+status: removed
 app_version: '1.0.1'
 host: prod
 disk_quota_gb: 10
-# DNS + edge snippet still pending — remove once educaswiss.ocete.ch is live.
-monitor_edge_probe: false
 ports:
   frontend: 8140
   api: 8141
   postgres: 8142
 notes: >-
-  Not provisioned yet as of 2026-07-27: no oct-educaswiss account on the host
-  and no DNS/edge for educaswiss.ocete.ch despite status active; contact email
-  still missing.
+  Offboarded 2026-08-04 on Lars's instruction. Never provisioned: no
+  oct-educaswiss account was ever created, educaswiss.ocete.ch never got DNS or
+  an edge snippet, and no contact email was ever supplied — open since
+  2026-07-27 while the entry still read status active. There was therefore
+  nothing on the host to remove and remove-instance.yml was not run; this is a
+  ledger-only offboarding. The file is kept as the historical record, per the
+  README's offboarding rule. The stale monitor_edge_probe: false was dropped
+  with this change — it existed only to silence the edge probe until DNS went
+  live, which now never happens. The port block 8140/8141/8142 stays reserved:
+  ledger.py allocates around every entry regardless of status, so a future
+  client will not be handed these ports.
