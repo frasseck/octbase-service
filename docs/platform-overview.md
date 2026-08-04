@@ -99,7 +99,7 @@ instances always run base + client override.
    runs that working tree. CI (`.github/workflows/ci.yml`) gates lint, tests
    with a coverage floor, the frontend guards and a Playwright e2e run — and
    on every `main` push publishes per-commit images to GHCR
-   (`ghcr.io/frasseck/octbase/octbase-{api,frontend,mobile}:<sha>`), the
+   (`ghcr.io/frasseck/octbase-app/octbase-{api,frontend,mobile}:<sha>`), the
    natural starting point for the "build once, distribute via a registry"
    roadmap item in the [README](../README.md)'s known gaps.
 2. **Release** (app repo `release` skill): rename `## Unreleased` in

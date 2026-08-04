@@ -165,8 +165,8 @@ test and e2e jobs while every deployment runs the `hi/postgresql` 18.4 image.
 Both jobs now use `postgres:18` (tag existence verified on Docker Hub).
 
 ### F3 — `scripts/sync-installs.sh` header described an obsolete world — **fixed**
-It claimed dev and demo are *different git repos* (`frasseck/taskbase.git`!)
-where "a git pull won't work" — today both are `frasseck/octbase` and the
+It claimed dev and demo are *different git repos* where "a git pull won't
+work" — today both track the app repo and the
 demo's normal deploy path IS `git pull` (restart.sh / release skill). Header
 rewritten: the script is an escape hatch for pushing an unmerged tree, and
 the next `git pull` deploy overwrites whatever it synced. The related stale
@@ -192,7 +192,7 @@ touching; that's why check §3/C1 exists.)
 
 ### F6 — Facts worth knowing (no defect)
 - **CI already publishes per-commit images** to GHCR
-  (`ghcr.io/frasseck/octbase/octbase-{api,frontend,mobile}:<sha>`) on every
+  (`ghcr.io/frasseck/octbase-app/octbase-{api,frontend,mobile}:<sha>`) on every
   `main` push — directly relevant to this repo's "build once, distribute via
   a registry" roadmap item (README §Known gaps).
 - Verified clean on this pass: EN/DE locale key parity is exact in all three
@@ -734,7 +734,7 @@ both prunes sweep emptied per-client directories after files age out.
 
 ## 2.11 `octbase_repo` pointed at the pre-re-baseline app repo (2026-08-04, C4/C13)
 
-`octbase_repo` still read `git@github.com:frasseck/octbase.git` while the
+`octbase_repo` still pointed at a **retired predecessor repository** while the
 product repo had been re-baselined to **`frasseck/octbase-app.git`** on
 2026-08-02 — which `~/dev.ocete.ch`'s origin has tracked ever since.
 Filed as OCT-24, **repo confirmed correct by Lars 2026-08-04**.
@@ -743,8 +743,8 @@ Filed as OCT-24, **repo confirmed correct by Lars 2026-08-04**.
 repointed, plus the prose in the `octbase_src` comment, `sync-instance.yml`'s
 header, README prerequisites and `platform-overview.md`.
 
-**Why C13's up-front tag assert did not catch it:** the retired repo still
-exists, still resolves over SSH, and still carries `v0.4.0`–`v1.1.0`. So the
+**Why C13's up-front tag assert did not catch it:** the predecessor still
+existed, still resolved over SSH, and still carried `v0.4.0`–`v1.1.0`. So the
 "does this tag exist" probe passed — against the wrong repo. A client
 provisioned that day would have been built from pre-baseline code, with
 nothing merged after 2026-08-02, and nothing would have failed. `sync-instance`
