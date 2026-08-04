@@ -732,6 +732,65 @@ discovery is scoped to the `io.podman.compose.service=postgres` label so an
 unrelated exited container named `*postgres*` cannot fail the nightly, and
 both prunes sweep emptied per-client directories after files age out.
 
+## 2.11 `octbase_repo` pointed at the pre-re-baseline app repo (2026-08-04, C4/C13)
+
+`octbase_repo` still read `git@github.com:frasseck/octbase.git` while the
+product repo had been re-baselined to **`frasseck/octbase-app.git`** on
+2026-08-02 — which `~/dev.ocete.ch`'s origin has tracked ever since.
+Filed as OCT-24, **repo confirmed correct by Lars 2026-08-04**.
+**Resolution:** octbase-service `2b4de0c` on branch
+`feat/bootstrap-admin-email` (unmerged at time of writing) — `octbase_repo`
+repointed, plus the prose in the `octbase_src` comment, `sync-instance.yml`'s
+header, README prerequisites and `platform-overview.md`.
+
+**Why C13's up-front tag assert did not catch it:** the retired repo still
+exists, still resolves over SSH, and still carries `v0.4.0`–`v1.1.0`. So the
+"does this tag exist" probe passed — against the wrong repo. A client
+provisioned that day would have been built from pre-baseline code, with
+nothing merged after 2026-08-02, and nothing would have failed. `sync-instance`
+was pulling that repo's `main` too (`69f39a7`, versus `68849d0` on the real
+one). **A pointer that fails silently is worse than one that fails loudly**;
+this is the second entry in this register (with §2.8) where a deploy source
+was wrong in a way no check could see.
+
+**The stamps had to move with the pointer** (C4/C13, same commit):
+`octbase_version` and all three ledger `app_version` values read `1.1.0`, a tag
+that exists only in the retired repo — against `octbase-app` it does not exist
+at all, so `create-instance` and `set-version` would have refused every client.
+All four are now `1.0.1`, the only tag `octbase-app` carries and what beyags
+and demo actually report at `/api/v1/version`: the stamps catching up with the
+fleet, not a downgrade. Raise them when the app repo tags its next release.
+Recorded separately as OCT-27.
+
+Two follow-ups this leaves open: on the admin machine `octbase_git_cache` and
+`octbase_release_cache` are clones of the *old* remote and should be deleted
+once, so the git module does not fetch an unrelated history into a shallow
+clone; and `check-version-drift.py` cannot see this class of problem, since it
+compares against the **local** checkout's tags — which had every tag the remote
+lacked. Consulting the remote would close that gap.
+
+## 2.12 The 001_baseline squash took demo and beyags down (2026-08-04)
+
+Re-syncing demo failed at `sync-instance.yml`'s "Wait for API health"; beyags
+was already down the same way. App commit `56827b4` squashed migrations
+`001`–`039` into `001_baseline`, so a database recorded at version 38/39 has
+no file for its version, `runMigrations` cannot build a plan, and `main.go`
+exits — the API crash-loops without ever binding a port. Both were recovered
+with the stamp procedure in the app repo's `docs/operations.md` and now report
+`migrationVersion 2`; dev had been stamped a day earlier. **No toolkit change
+was needed to recover**, and none is made here.
+
+Two facts worth carrying: the public URL kept answering **200** throughout,
+because Caddy proxies the domain to the *frontend* container, which serves the
+SPA shell statically regardless of API state — probe `/api/v1/health`, never
+`/`. And the host tell for a crash-looping API is `octbase_octbase-api_1`
+reporting `00:00` elapsed on repeated `ps` checks while postgres and frontend
+sit at minutes. The gap — that a known-fatal, precisely detectable
+precondition surfaces as a 150-second unnamed health-gate timeout instead of a
+pre-flight assert — is filed as OCT-19 and is **not** fixed. It now matters
+mainly for restore-from-backup: `backup-fleet.sh` keeps 14 days, so
+pre-squash dumps are on disk and restoring one reintroduces the outage.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash
