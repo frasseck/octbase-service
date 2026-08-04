@@ -20,13 +20,15 @@ platform.
 | Working copy (host) | Git repo | Branch policy | What it is |
 |---|---|---|---|
 | `~/dev.ocete.ch` | `frasseck/octbase-app` | `release_vN` feature/release branches | **The application monorepo, development checkout.** Go API + desktop frontend + mobile SPA + shared JS + operations probe. Also the default `octbase_src` the client playbooks rsync from. |
-| `~/demo.ocete.ch` | `frasseck/octbase-app` | `main` only, deployed by `git pull` | **The public demo instance** — same repo, second checkout. Runs whatever is merged to `main`, with `OCTBASE_DEMO_MODE=true` (seeded demo logins by design). |
 | `~/ocete.ch` | `frasseck/ocete` | `main` | **The marketing/landing site** — static no-build site + Go contact-form mailer. No dependency on the app. Carries the public pricing, privacy policy, terms and imprint. |
 | `~/octbase-service` | `frasseck/octbase-service` | `main` | **This repo** — client ledger, Ansible playbooks, fleet monitoring, host backup. Provisions one production stack per client. |
 
-Two checkouts of the same app repo is deliberate: `dev.ocete.ch` is a working
-tree (it may be on a release branch with uncommitted work); `demo.ocete.ch`
-is a deployment target that only ever moves by pulling `main`.
+There is exactly **one** app-repo checkout on the host. `~/demo.ocete.ch` used
+to be a second one — a deployment target that only ever moved by pulling
+`main` — but the public demo became a ledger-managed client instance under its
+own `oct-demo` account on 2026-07-11 (`migrate-instance.yml`), and the
+directory was removed afterwards. Deploy the demo like any other client, from
+the admin machine, and never by pulling into a checkout on the host.
 
 ## 2. What runs on the host
 
@@ -106,9 +108,13 @@ instances always run base + client override.
    `CHANGELOG.md` to the version + date, merge `release_vN` → `main` via
    `scripts/release.sh`. The build default version stays `beta` — releases
    are stamped per deployment via `OCTBASE_APP_VERSION` in each `.env`.
-3. **Deploy the demo**: `git pull` + compose rebuild in `~/demo.ocete.ch`
-   (that is what `~/restart.sh` does), bump `OCTBASE_APP_VERSION` in
-   `demo.ocete.ch/.env`.
+3. **Deploy the demo**: it is a ledger-managed client like any other since
+   2026-07-11, so this is `ansible-playbook playbooks/sync-instance.yml -e
+   client=demo` from the admin machine (or `set-version.yml` to deploy the
+   ledger's `app_version` tag and stamp it). There is no `~/demo.ocete.ch`
+   checkout to pull into and no `.env` on this host to edit — its `.env` lives
+   in the unreadable `oct-demo` home, and `app_version` in
+   `ledger/clients/demo.yml` is what stamps the version.
 4. **Roll out to clients** (this repo): bump `octbase_version` in
    `inventory/group_vars/all/main.yml` (and/or `app_version` per ledger entry),
    make sure the `octbase_src` checkout is **on the released commit with a

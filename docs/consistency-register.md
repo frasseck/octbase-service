@@ -862,8 +862,11 @@ comm -23 /tmp/env-keys /tmp/interp-keys   # expect: no output
 # C4/C13 — every stamp in this repo: tagged, changelogged, and how far behind
 scripts/check-version-drift.py            # WARN = pinned behind, FAIL = broken stamp
 
-# C4 — the resident stacks' own stamps (not this repo's; check against /health)
-grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev ~/demo.ocete.ch/.env
+# C4 — stamps this script cannot see. Dev is the only stack whose .env is
+# readable from here; a managed instance's .env lives in a 0750 client home, so
+# ask its running API instead of the file (`~/demo.ocete.ch` is long gone).
+grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev
+for h in dev demo beyags; do printf '%-8s %s\n' "$h" "$(curl -s https://$h.ocete.ch/api/v1/health)"; done
 
 # C13 — code parity, not just stamp parity (§2.8): the live schema must equal
 # the migration count of the tag the ledger names, and a route the tag does not

@@ -64,7 +64,7 @@ podman ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'   # resident stacks 
 | Stack | Where to diagnose |
 |---|---|
 | A client instance | `sudo machinectl shell oct-<name>@` (or ssh) → then the app repo's probe: `~octbase/octbase-operations/check-health.sh`; public edge: `curl -s https://<name>.ocete.ch/health` |
-| Demo (`octbase` project) | `~/demo.ocete.ch` checkout → its `stack-health` skill |
+| Demo | A client instance since 2026-07-11 — diagnose it as one (account `oct-demo`), not as a resident stack. There is no `~/demo.ocete.ch` checkout |
 | Dev (`octbase_dev` project) | `~/dev.ocete.ch` checkout → its `stack-health` skill |
 | Marketing site | `~/ocete.ch` checkout → its `run-site` skill |
 

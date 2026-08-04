@@ -11,11 +11,13 @@ contracts (C1–C15) and the drift log live in
 [`docs/consistency-register.md`](../../../docs/consistency-register.md) —
 read §1 first; this skill is the execution procedure for its §3 checklist.
 
-All four working copies are on this host:
+Three working copies are on this host — the app repo has exactly one checkout
+here (`~/demo.ocete.ch` was the second and is gone; the demo has been a
+ledger-managed client under `oct-demo` since 2026-07-11):
 
 ```bash
-export OCTBASE_SRC=~/dev.ocete.ch     # app repo (dev checkout)
-# ~/demo.ocete.ch (app repo, main) · ~/ocete.ch (marketing) · this repo
+export OCTBASE_SRC=~/dev.ocete.ch     # app repo — the only checkout on the host
+# ~/ocete.ch (marketing) · ~/octbase-service (this repo)
 ```
 
 ## Checklist (from register §3, with interpretation)
@@ -35,9 +37,13 @@ grep -oE 'OCTBASE_[A-Z_]+' playbooks/files/podman-compose.client.yml | sort -u \
 # newest app repo tag. WARN (trailing) is a deliberate pin, FAIL is drift.
 scripts/check-version-drift.py
 
-# C4 — the resident dev/demo stacks' own stamps (not this repo's; the script
-# cannot see them). Compare against what /api/v1/health actually reports.
-grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev ~/demo.ocete.ch/.env
+# C4 — stamps this repo's script cannot see. Dev is the only stack left whose
+# .env is readable from here; every managed instance keeps its .env in a 0750
+# client home, so ask the running API instead of the file.
+grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev
+for h in dev demo beyags; do
+  printf '%-8s %s\n' "$h" "$(curl -s https://$h.ocete.ch/api/v1/health)"
+done   # version + migrationVersion; compare against ledger app_version
 
 # C8 — live host ports vs ledger.py RESERVED_PORTS
 podman ps --format '{{.Ports}}' | grep -oE '[0-9.]+:[0-9]+' | sort -u

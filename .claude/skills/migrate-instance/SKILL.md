@@ -70,39 +70,37 @@ ansible-playbook playbooks/migrate-instance.yml -e client=<name>
   (`podman-compose up -d` in the source dir); the edge config is only
   touched in the final tasks of phase 3.
 
-## The pending concrete job: demo.ocete.ch → oct-demo
+## Worked example: demo.ocete.ch → oct-demo (done 2026-07-11)
 
-`ledger/clients/demo.yml` is prepared (ports 8110–8112, enterprise,
-`app_version 1.0.4`); "demo" was unreserved in `ledger.py` and
-`create-instance.yml` for exactly this. The legacy stack runs in
-`/home/claude/demo.ocete.ch` (account `claude`, project `octbase`, ports
-8080/8000/5432 — those stay in `RESERVED_PORTS`).
+Kept because it is the only end-to-end run of this playbook, not because
+anything is outstanding. **The migration is complete**: the demo is a
+ledger-managed client (`ledger/clients/demo.yml`, ports 8110-8112,
+enterprise), it runs under `oct-demo`, and the legacy
+`/home/claude/demo.ocete.ch` checkout has been removed — the old stack's
+ports 8080/8000/5432 stay in `RESERVED_PORTS` regardless.
 
 ```bash
 ansible-playbook playbooks/migrate-instance.yml -e client=demo
 #   Domain to move:  demo.ocete.ch
 #   Account:         claude
-#   Path:            /home/claude/demo.ocete.ch
+#   Path:            /home/claude/demo.ocete.ch      # no longer exists
 ```
 
-Demo-specific follow-ups, in order:
-1. **Demo mode**: the client model writes `OCTBASE_DEMO_MODE=false`; the
-   demo needs it **true** (seeded demo logins). As `oct-demo`:
+What the run needed afterwards, worth knowing for the next migration:
+
+1. **Demo mode**: the client model writes `OCTBASE_DEMO_MODE=false`; the demo
+   needs it **true** (seeded demo logins). As `oct-demo`:
    `sed -i 's/^OCTBASE_DEMO_MODE=.*/OCTBASE_DEMO_MODE=true/' ~/octbase/.env
-   && systemctl --user restart octbase` (the client compose override passes
-   it through with a fail-closed default).
-2. Same domain, so **no DNS change**; verify `https://demo.ocete.ch/health`
-   and a demo login through the edge.
-3. Remove the demo section from `/home/claude/restart.sh` and (after a
-   soak) the old `/home/claude/demo.ocete.ch` checkout. Note the app-repo
-   `release` skill deploys the demo by pulling in that checkout — **update
-   the release skill/process to target the new location**
-   (`sudo -u oct-demo` or a deploy via `create-instance.yml -e client=demo`)
-   before the next release.
-4. Update `docs/platform-overview.md`, the register's "three resident
-   stacks" wording (C8/C9/C15), and the nightly backup coverage
-   (`backup/backup-octbase.sh` runs from the `claude` account — the demo DB
-   must stay covered, see README Known gaps).
+   && systemctl --user restart octbase` — the client compose override passes
+   it through with a fail-closed default.
+2. Same domain, so **no DNS change** — verify `https://demo.ocete.ch/health`
+   and a real login through the edge.
+3. **The release process had to move with it.** The app repo's `release`
+   skill used to deploy the demo by pulling into that checkout; with the
+   checkout gone the demo deploys like any client, from the admin machine
+   (`sync-instance.yml -e client=demo`, or `set-version.yml` for a tagged
+   release). A migration is not finished until whatever used to deploy the
+   old location has been repointed.
 
 ## Related
 
