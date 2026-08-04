@@ -10,7 +10,7 @@ base_domain: ocete.ch
 default_client_host: prod
 
 # Path ON THE ADMIN MACHINE to a checkout of the app repo
-# (frasseck/octbase.git) at the release you want to deploy. The create
+# (frasseck/octbase-app.git) at the release you want to deploy. The create
 # playbook rsyncs this working tree AS-IS to the client account — make sure
 # it is on the released commit with a clean `git status` before rolling out.
 octbase_src: "{{ lookup('env', 'HOME') }}/Apps/octbase"
@@ -20,7 +20,13 @@ octbase_src: "{{ lookup('env', 'HOME') }}/Apps/octbase"
 # sync-instance clones/updates octbase_branch into octbase_git_cache ON THE
 # ADMIN MACHINE, then rsyncs that tree to the client — the production host
 # never talks to GitHub. Override the branch per run: -e octbase_branch=...
-octbase_repo: "git@github.com:frasseck/octbase.git"
+#
+# frasseck/octbase-app.git is the CURRENT product repo (the 2026-08-02
+# re-baseline). frasseck/octbase.git is its predecessor and is retired: it
+# still exists, still resolves over SSH, and still carries tags v0.4.0 through
+# v1.1.0, so pointing here at the wrong one fails silently — a provision
+# succeeds and ships pre-baseline code. Confirmed by Lars 2026-08-04.
+octbase_repo: "git@github.com:frasseck/octbase-app.git"
 octbase_branch: main
 octbase_git_cache: "{{ lookup('env', 'HOME') }}/.cache/octbase-service/octbase"
 
@@ -35,7 +41,15 @@ octbase_release_cache: "{{ lookup('env', 'HOME') }}/.cache/octbase-service/octba
 # value selects the code AND labels it, and the two cannot drift apart (C4).
 # Every value used here or in a ledger app_version must exist as a tag in
 # octbase_repo and as a dated release entry in the app repo's CHANGELOG.md.
-octbase_version: "1.1.0"
+#
+# 1.0.1, not 1.1.0, since 2026-08-04. The stamps read 1.1.0 while octbase_repo
+# still named the retired frasseck/octbase.git, where v1.1.0 exists — against
+# the current repo that tag does not exist at all, so create-instance and
+# set-version would both refuse every client. 1.0.1 is the only tag
+# octbase-app carries, and it is what beyags and demo actually report at
+# /api/v1/version, so this is the stamps catching up with the fleet rather
+# than a downgrade. Raise it when the app repo tags its next release.
+octbase_version: "1.0.1"
 
 # SMTP relay for outgoing app mail (invitations, notifications). Leaving the
 # host empty makes the API log mail to stdout — set a real relay before

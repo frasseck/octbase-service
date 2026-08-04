@@ -7,7 +7,7 @@
 # Unlike create-instance.yml this is UPDATE-ONLY: it does not create the Linux
 # account, generate secrets, or write/rewrite the client's .env — it refuses if
 # the instance has not been provisioned yet. What it does: fetch the requested
-# branch of frasseck/octbase.git on the ADMIN machine (the host never talks to
+# branch of frasseck/octbase-app.git on the ADMIN machine (the host never talks to
 # GitHub — same model as create-instance's octbase_src rsync), push that tree
 # into ~/octbase, refresh the production compose override, then ALWAYS rebuild
 # the images, restart the stack and gate on /health — app code is baked into
