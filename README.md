@@ -60,6 +60,7 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `playbooks/migrate-instance.yml` | Move an existing installation to its own client account and/or a new domain (same host) |
 | `playbooks/migrate-host.yml` | Move a client instance to **another host** (staged via the admin machine) |
 | `playbooks/suspend-instance.yml` | Stop a `status: suspended` client non-destructively; domain answers 503 |
+| `playbooks/reset-user-password.yml` | Reset one Octbase **user's** password directly in a client's database (no mail needed) |
 | `playbooks/set-max-users.yml` | Set `OCTBASE_MAX_USERS` for a client and restart its stack |
 | `playbooks/set-resources.yml` | Apply a client's memory/CPU/tasks caps + disk quota, no redeploy |
 | `playbooks/set-version.yml` | Deploy a client's `app_version` release tag, stamp it and verify via `/api/v1/version` |
@@ -283,6 +284,46 @@ the code — to change it, edit the ledger entry *before* syncing. To re-apply
 the other ledger/platform `.env` settings, run `create-instance.yml`. Make sure
 the branch is at or above the running schema version before syncing a live
 instance.
+
+### Reset a user's password
+
+Client stacks have no Mailpit, so the self-service reset mails a token to a real
+mailbox. When that is not available — a locked-out admin, a departed contact —
+reset the password in the database instead:
+
+```bash
+ansible-playbook playbooks/reset-user-password.yml -e client=acme \
+    -e email=someone@acme.ch
+```
+
+A 24-character password is generated and printed **once** at the end of the run;
+it is never written to disk. To set a known one instead (it must still clear the
+app's 12-character minimum and the common-password blocklist):
+
+```bash
+ansible-playbook playbooks/reset-user-password.yml -e client=acme \
+    -e email=someone@acme.ch -e user_password='…'
+```
+
+The playbook writes the same end state as the app's own reset
+(`auth/password_reset.go`), in one transaction: the new bcrypt hash (cost 12, on
+the admin machine — `python3-bcrypt` required), every refresh token deleted so
+existing sessions end, any pending reset link marked spent, and one
+`USER_PASSWORD_RESET` audit row with `method: ops_playbook` so an out-of-band
+reset is as visible in `/audit-logs` as a self-service one. It then reads the
+row back and fails if the stored hash or the session count is not what it
+expects. No restart, no downtime — the API reads `users` on every login.
+
+The run stops rather than guessing if the address does not match exactly one
+account. It deliberately does **not** touch:
+
+> **MFA** — a new password will not help someone who lost their authenticator;
+> `mfa_credentials`/`mfa_recovery_codes` are a separate decision. The result
+> message flags it when the account has MFA on.
+> **Deactivated accounts** — the password will be valid but login still refused;
+> the run warns instead of reactivating, since that is a licensing decision.
+> **`POSTGRES_PASSWORD`** — the Postgres *role* password is instance
+> infrastructure, lives in `.env`, and rotating it means recreating the stack.
 
 ### Set OCTBASE_MAX_USERS
 

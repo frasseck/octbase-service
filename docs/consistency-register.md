@@ -165,8 +165,8 @@ test and e2e jobs while every deployment runs the `hi/postgresql` 18.4 image.
 Both jobs now use `postgres:18` (tag existence verified on Docker Hub).
 
 ### F3 — `scripts/sync-installs.sh` header described an obsolete world — **fixed**
-It claimed dev and demo are *different git repos* (`frasseck/taskbase.git`!)
-where "a git pull won't work" — today both are `frasseck/octbase` and the
+It claimed dev and demo are *different git repos* where "a git pull won't
+work" — today both track the app repo and the
 demo's normal deploy path IS `git pull` (restart.sh / release skill). Header
 rewritten: the script is an escape hatch for pushing an unmerged tree, and
 the next `git pull` deploy overwrites whatever it synced. The related stale
@@ -192,7 +192,7 @@ touching; that's why check §3/C1 exists.)
 
 ### F6 — Facts worth knowing (no defect)
 - **CI already publishes per-commit images** to GHCR
-  (`ghcr.io/frasseck/octbase/octbase-{api,frontend,mobile}:<sha>`) on every
+  (`ghcr.io/frasseck/octbase-app/octbase-{api,frontend,mobile}:<sha>`) on every
   `main` push — directly relevant to this repo's "build once, distribute via
   a registry" roadmap item (README §Known gaps).
 - Verified clean on this pass: EN/DE locale key parity is exact in all three
@@ -732,7 +732,66 @@ discovery is scoped to the `io.podman.compose.service=postgres` label so an
 unrelated exited container named `*postgres*` cannot fail the nightly, and
 both prunes sweep emptied per-client directories after files age out.
 
-## 2.11 The bootstrap admin's email, and two `.env` keys that never applied (2026-08-04)
+## 2.11 `octbase_repo` pointed at the pre-re-baseline app repo (2026-08-04, C4/C13)
+
+`octbase_repo` still pointed at a **retired predecessor repository** while the
+product repo had been re-baselined to **`frasseck/octbase-app.git`** on
+2026-08-02 — which `~/dev.ocete.ch`'s origin has tracked ever since.
+Filed as OCT-24, **repo confirmed correct by Lars 2026-08-04**.
+**Resolution:** octbase-service `2b4de0c` on branch
+`feat/bootstrap-admin-email` (unmerged at time of writing) — `octbase_repo`
+repointed, plus the prose in the `octbase_src` comment, `sync-instance.yml`'s
+header, README prerequisites and `platform-overview.md`.
+
+**Why C13's up-front tag assert did not catch it:** the predecessor still
+existed, still resolved over SSH, and still carried `v0.4.0`–`v1.1.0`. So the
+"does this tag exist" probe passed — against the wrong repo. A client
+provisioned that day would have been built from pre-baseline code, with
+nothing merged after 2026-08-02, and nothing would have failed. `sync-instance`
+was pulling that repo's `main` too (`69f39a7`, versus `68849d0` on the real
+one). **A pointer that fails silently is worse than one that fails loudly**;
+this is the second entry in this register (with §2.8) where a deploy source
+was wrong in a way no check could see.
+
+**The stamps had to move with the pointer** (C4/C13, same commit):
+`octbase_version` and all three ledger `app_version` values read `1.1.0`, a tag
+that exists only in the retired repo — against `octbase-app` it does not exist
+at all, so `create-instance` and `set-version` would have refused every client.
+All four are now `1.0.1`, the only tag `octbase-app` carries and what beyags
+and demo actually report at `/api/v1/version`: the stamps catching up with the
+fleet, not a downgrade. Raise them when the app repo tags its next release.
+Recorded separately as OCT-27.
+
+Two follow-ups this leaves open: on the admin machine `octbase_git_cache` and
+`octbase_release_cache` are clones of the *old* remote and should be deleted
+once, so the git module does not fetch an unrelated history into a shallow
+clone; and `check-version-drift.py` cannot see this class of problem, since it
+compares against the **local** checkout's tags — which had every tag the remote
+lacked. Consulting the remote would close that gap.
+
+## 2.12 The 001_baseline squash took demo and beyags down (2026-08-04)
+
+Re-syncing demo failed at `sync-instance.yml`'s "Wait for API health"; beyags
+was already down the same way. App commit `56827b4` squashed migrations
+`001`–`039` into `001_baseline`, so a database recorded at version 38/39 has
+no file for its version, `runMigrations` cannot build a plan, and `main.go`
+exits — the API crash-loops without ever binding a port. Both were recovered
+with the stamp procedure in the app repo's `docs/operations.md` and now report
+`migrationVersion 2`; dev had been stamped a day earlier. **No toolkit change
+was needed to recover**, and none is made here.
+
+Two facts worth carrying: the public URL kept answering **200** throughout,
+because Caddy proxies the domain to the *frontend* container, which serves the
+SPA shell statically regardless of API state — probe `/api/v1/health`, never
+`/`. And the host tell for a crash-looping API is `octbase_octbase-api_1`
+reporting `00:00` elapsed on repeated `ps` checks while postgres and frontend
+sit at minutes. The gap — that a known-fatal, precisely detectable
+precondition surfaces as a 150-second unnamed health-gate timeout instead of a
+pre-flight assert — is filed as OCT-19 and is **not** fixed. It now matters
+mainly for restore-from-backup: `backup-fleet.sh` keeps 14 days, so
+pre-squash dumps are on disk and restoring one reintroduces the outage.
+
+## 2.13 The bootstrap admin's email, and two `.env` keys that never applied (2026-08-04)
 
 **The first SUPER_ADMIN had an undeliverable login.** `create-instance.yml`
 hardcoded `admin@<client>.<base_domain>` — an address on the client's own
@@ -792,7 +851,7 @@ both files and still be dead. The reverse check is now in the checklist below.
 grep -oE '^OCTBASE_[A-Z_]+' playbooks/templates/env.j2 | sort -u \
   | while read k; do grep -qE "^#?$k=" $OCTBASE_SRC/.env.example || echo "MISSING in .env.example: $k"; done
 
-# C1/C2, the other direction (§2.11) — a key can be in BOTH files and still be
+# C1/C2, the other direction (§2.13) — a key can be in BOTH files and still be
 # dead. Neither compose file uses env_file:, so .env reaches a container only
 # via ${NAME} interpolation. Anything listed here is written but never applied.
 grep -oE '^[A-Z][A-Z0-9_]*' playbooks/templates/env.j2 | sort -u > /tmp/env-keys
