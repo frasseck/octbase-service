@@ -660,6 +660,38 @@
         enabled: true
         state: "{{ 'reloaded' if (edge_caddyfile_written.changed or edge_import.changed) else 'started' }}"
 
+    # ── Record the host in the inventory ─────────────────────────────────
+    # On the ADMIN machine, not the target: how to reach this host is the
+    # admin machine's knowledge. The port in particular is otherwise an edit
+    # the operator has to remember after the SSH socket has already moved —
+    # miss it and the next run, and every per-client playbook, cannot connect.
+    #
+    # blockinfile with a per-host marker, deliberately, rather than lineinfile:
+    # a bare `ansible_user:` regexp matches the FIRST such line anywhere in the
+    # file, which on a multi-host inventory is somebody else's entry. The
+    # markers are YAML comments, so the file stays valid and the hand-written
+    # commentary that explains the fleet model survives — which a YAML
+    # round-trip through to_nice_yaml would not.
+    #
+    # ansible_host is not written: it is already in the entry (it is how this
+    # run connected), and repeating it here would duplicate the key.
+    - name: Record this host's connection settings in the inventory
+      ansible.builtin.blockinfile:
+        path: "{{ inventory_file }}"
+        marker: "      # {mark} managed by setup-host.yml for {{ target_host }}"
+        insertafter: "^    {{ target_host }}:$"
+        block: "      ansible_user: {{ ssh_account.stdout }}\n      ansible_port: {{ ssh_port }}"
+        # This is the file every other playbook resolves its hosts through. A
+        # malformed insert would take the whole toolkit offline, so the write
+        # only lands if the result still parses. It is also the backstop for an
+        # entry indented differently from the rest of the file: the anchor above
+        # would not match, blockinfile would append at end-of-file instead, and
+        # this refuses the result rather than writing a broken inventory.
+        validate: python3 -c "import yaml; yaml.safe_load(open('%s'))"
+      delegate_to: localhost
+      become: false
+      register: inventory_recorded
+
     # ── What is left for the operator ────────────────────────────────────
     - name: Next steps
       ansible.builtin.debug:
@@ -667,9 +699,10 @@
           {{
             ['Host ' ~ inventory_hostname ~ ' is provisioned.']
             + (['',
-                '⚠ SSH now listens on port ' ~ ssh_port ~ '. This session survives, but the',
-                '  NEXT connection must use it — set ansible_port: ' ~ ssh_port ~ ' on this',
-                '  host in inventory/hosts.yml, or add it to your ~/.ssh/config.',
+                '⚠ SSH now listens on port ' ~ ssh_port ~ '. This session survives, but every',
+                '  LATER connection must use it. inventory/hosts.yml has been updated with',
+                '  ansible_port and ansible_user for ' ~ target_host ~ ' — commit that change,',
+                '  it is how the other playbooks will reach this host.',
                 '',
                 '  Log in with:  ssh -p ' ~ ssh_port ~ ' <account>@' ~ (ansible_host | default(inventory_hostname)),
                 '  where <account> is one of: ' ~ ssh_allow_users | join(', ') ~ '.',
