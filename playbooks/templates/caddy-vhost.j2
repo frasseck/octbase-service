@@ -2,6 +2,43 @@
 # Edge vhost for client "{{ client }}" ({{ client_ledger.display_name | default(client) }}).
 # Include from the edge Caddyfile:  import {{ edge_snippet_dir }}/*.caddy
 {{ fqdn }} {
+	# Access log with URL-borne credentials stripped.
+	#
+	# Two reasons this block exists rather than being left out (register D30):
+	#
+	# 1. Credentials. The SPA opens its SSE stream as ?token=<access token>,
+	#    because EventSource cannot set an Authorization header, and the OAuth
+	#    callback carries ?code= and ?state=. Caddy logs the request URI
+	#    verbatim, so a plain `log` writes live bearer tokens to disk — measured
+	#    on this platform 2026-08-04: 692 of them in one world-readable,
+	#    never-rotated file, 361 belonging to a client instance. The `query`
+	#    filter replaces those three values and leaves the rest of the line
+	#    intact. Keep the list in step with sensitiveQueryParams in the app's
+	#    octbase-api/internal/shared/logredact.go, which does the same job one
+	#    layer down for the API's own log.
+	#
+	# 2. Without a `log` block a client vhost is not merely unlogged — Caddy puts
+	#    it in the server's `skip_hosts`, so the platform has no edge access log
+	#    for exactly the traffic that matters. That was the state on disk, and
+	#    nobody had chosen it.
+	#
+	# Verified against the edge's Caddy 2.6.2 with `caddy adapt` and a live
+	# throwaway server: the query filter is supported there, and a token in the
+	# URI comes out REDACTED.
+	log {
+		output file /var/log/caddy/access.log
+		format filter {
+			wrap console
+			fields {
+				request>uri query {
+					replace token REDACTED
+					replace code REDACTED
+					replace state REDACTED
+				}
+			}
+		}
+	}
+
 	encode gzip
 	reverse_proxy 127.0.0.1:{{ client_ledger.ports.frontend }}
 }

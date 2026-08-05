@@ -1,0 +1,63 @@
+---
+# Every /etc/octbase/clients.d/<name>.conf must correspond to a ledger client.
+#
+# Included by install-monitoring.yml and install-backup.yml, the two playbooks
+# that deploy the fleet-wide jobs which loop over that registry.
+#
+# Why this exists (register D29): `clients.d/dev.conf` was hand-written and
+# named `oct-dev`, an account that has never existed — dev.ocete.ch deliberately
+# does NOT follow the client service-setup standard, it runs under the `claude`
+# account with systemd user units. Every fleet loop then reported it, forever:
+# `octbase-fleet-backup.service` sat in a permanent `failed` state, and
+# `status.json` read `"overall":"DOWN"` while every real client was fine. Since
+# the unit's exit code was the only failure signal the backup job had, a real
+# dump failure would have been indistinguishable from that standing noise.
+#
+# The registry has exactly one sanctioned writer — create-instance.yml — and
+# remove/suspend/migrate-instance maintain it. Anything else in there is drift,
+# and drift in this directory is silent by construction: the loops treat a
+# stray entry as a client that is down, which is precisely what a real
+# emergency looks like.
+#
+# Deliberately lenient about WHICH ledger file: an offboarded client keeps its
+# file with `status: removed`, and a suspended one keeps both file and conf, so
+# requiring `status: active` would fail during ordinary lifecycle states. The
+# check that matters is that a ledger file exists at all.
+#
+# Also not checked: that a conf on host A belongs to a client pinned to host A.
+# Worth adding when a second host carries clients; today it would only restate
+# what `ledger.py validate` already covers.
+
+- name: Registry — list the client confs on this host
+  ansible.builtin.find:
+    paths: "{{ clients_registry_dir }}"
+    patterns: "*.conf"
+    file_type: file
+  register: registry_confs
+
+- name: Registry — compare against the ledger
+  vars:
+    # Single-line, double-quoted, ending in `| list` — the idiom the other
+    # playbooks use for templated lists (set-version.yml, sync-instance.yml).
+    # A folded (`>-`) scalar here would hand the assert a string that merely
+    # looks like a list.
+    registry_names: "{{ registry_confs.files | map(attribute='path') | map('basename') | map('regex_replace', '\\.conf$', '') | sort | list }}"
+    ledger_names: "{{ lookup('ansible.builtin.fileglob', playbook_dir + '/../ledger/clients/*.yml', wantlist=True) | map('basename') | map('regex_replace', '\\.yml$', '') | sort | list }}"
+    strays: "{{ registry_names | difference(ledger_names) | list }}"
+  ansible.builtin.assert:
+    that:
+      - strays | length == 0
+    fail_msg: >-
+      {{ clients_registry_dir }} on {{ inventory_hostname }} holds
+      {{ strays | length }} entr{{ 'y' if (strays | length) == 1 else 'ies' }}
+      with no ledger client: {{ strays | join(', ') }}.
+      Every fleet job loops over this directory, so a stray entry reports as a
+      client that is DOWN — poisoning the aggregate state and the backup job's
+      exit code, which is the only failure signal that job has (register D29).
+      The registry's only sanctioned writer is create-instance.yml. If an entry
+      names a real client, add its ledger file; if it does not — a resident
+      stack such as dev, which is not a managed client — delete it:
+      {{ strays | map('regex_replace', '^', 'rm ' + clients_registry_dir + '/') | map('regex_replace', '$', '.conf') | join(' && ') }}
+    success_msg: >-
+      {{ registry_names | length }} registry entr{{ 'y' if (registry_names | length) == 1 else 'ies' }}
+      on {{ inventory_hostname }}, all backed by a ledger client.

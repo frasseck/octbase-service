@@ -47,11 +47,26 @@ STATUSES = {"active", "suspended", "removed"}
 # check, not RFC 5322 — it catches "", "tbd" and "lars at beyags.com", which is
 # what actually goes wrong; nothing offline can prove deliverability.
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-# Ports already used by the dev/demo/marketing stacks on the host
-# (8025/8026 are the dev/demo Mailpit UI ports of the dev overlay; 8120 is
-# the oct-web marketing site, scripts/migrate-ocete-web.sh — it sits inside
-# the client allocation range and must never be handed to a client).
-RESERVED_PORTS = {5432, 5433, 8000, 8001, 8025, 8026, 8080, 8081, 8082, 8083, 8120}
+# Ports already used by the resident (non-ledger) stacks on the host, which
+# the allocator must never hand to a client.
+#
+# 8100/8101/8102 are the dev stack's live frontend/api/postgres — added
+# 2026-08-04, having been missing since dev moved onto that block. Latent
+# rather than live, because allocation starts at PORT_BASE and only advances,
+# so nothing below 8110 could ever have been handed out; but C8 says this set
+# mirrors host facts, and it did not. The lower entries are the pre-move
+# dev/demo ports (8025/8026 were their Mailpit UIs) — kept, since they cost
+# nothing and an old stack could still be revived on them.
+#
+# 8120 is the oct-web marketing site (scripts/migrate-ocete-web.sh); it sits
+# *inside* the client allocation range, which is why it has to be listed.
+# 8110-8112 and 8130-8132 are NOT here on purpose: demo and beyags are ledger
+# clients, so taken_ports() picks their blocks up from the ledger itself.
+RESERVED_PORTS = {
+    5432, 5433, 8000, 8001, 8025, 8026, 8080, 8081, 8082, 8083,
+    8100, 8101, 8102,   # dev.ocete.ch (resident, not a ledger client)
+    8120,               # oct-web marketing site
+}
 PORT_BASE = 8110   # first client block; blocks advance in steps of 10
 PORT_STEP = 10
 

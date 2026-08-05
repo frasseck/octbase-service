@@ -12,6 +12,36 @@
   become: true
 
   tasks:
+    # ── Pre-flight: alerting must be able to work, or be off on purpose ──────
+    # monitor-all.sh guards its mail path with
+    #   [ -n "$ALERT_EMAIL" ] && command -v sendmail
+    # Both halves fail QUIETLY. On this host both were false for weeks: no
+    # recipient and no MTA, so every state change reached only the journal and
+    # nothing pushed (register D28). An operator setting alert_email alone would
+    # have believed the gap closed. So: either alerting is deliberately off, or
+    # the relay it needs must be fully configured — there is no third state
+    # where the monitor installs and cannot alert.
+    - name: Alerting is either deliberately off, or fully configured
+      ansible.builtin.assert:
+        that:
+          - (alert_email | default('') | trim | length == 0)
+            or ((smtp_host | default('') | trim | length > 0)
+                and (smtp_pass | default('') | trim | length > 0))
+        fail_msg: >-
+          alert_email is set to '{{ alert_email }}', but the SMTP relay is not
+          usable: smtp_host='{{ smtp_host | default('') }}',
+          smtp_pass={{ 'set' if (smtp_pass | default('') | trim | length > 0) else 'EMPTY' }}.
+          The relay rejects unauthenticated senders, so alerts would fail on
+          every send. Create inventory/group_vars/all/vault.yml with
+          vault_smtp_pass (see vault.yml.sample) and run with --ask-vault-pass,
+          or turn alerting off on purpose with -e alert_email=''.
+          Installing a monitor that cannot alert is the one outcome this
+          refuses, because it looks identical to a working one.
+        success_msg: >-
+          {{ 'Alerting deliberately disabled (alert_email empty); state changes
+          go to the journal only.' if (alert_email | default('') | trim | length == 0)
+          else 'Alerting to ' + alert_email + ' via ' + smtp_host }}
+
     - name: Create directories
       ansible.builtin.file:
         path: "{{ item }}"
@@ -22,6 +52,11 @@
         - /etc/octbase
         - "{{ clients_registry_dir }}"
         - /var/lib/octbase-monitor
+
+    # The monitor loops over this registry, so a stray entry becomes a
+    # permanent DOWN in the aggregate state (register D29).
+    - name: Every registry entry maps to a ledger client
+      ansible.builtin.include_tasks: tasks/assert-registry-matches-ledger.yml
 
     # check-health.sh must come from a VERSIONED release, not octbase_src (the
     # admin's live dev working tree, which deploys whatever branch — and
@@ -51,6 +86,31 @@
         dest: /usr/local/lib/octbase/monitor-all.sh
         mode: "0755"
 
+    # ── The MTA the alert path depends on ───────────────────────────────────
+    # msmtp-mta is what provides /usr/sbin/sendmail, which is the binary
+    # monitor-all.sh probes for. Installed only when alerting is on: a host
+    # that has opted out has no reason to grow a mail sender.
+    - name: Install msmtp as the system MTA (provides sendmail)
+      when: alert_email | default('') | trim | length > 0
+      ansible.builtin.apt:
+        name:
+          - msmtp
+          - msmtp-mta
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Configure the msmtp relay
+      when: alert_email | default('') | trim | length > 0
+      ansible.builtin.template:
+        src: templates/msmtprc.j2
+        dest: /etc/msmtprc
+        owner: root
+        group: root
+        # 0600: holds the relay password, and msmtp refuses a config file with
+        # permissions more generous than it expects.
+        mode: "0600"
+
     - name: Write monitor configuration
       ansible.builtin.copy:
         dest: /etc/octbase/monitor.conf
@@ -60,6 +120,27 @@
           ALERT_EMAIL={{ alert_email }}
           EDGE_PROBE={{ '1' if (edge_probe | bool) else '0' }}
           DISK_ALERT_PCT={{ disk_alert_pct }}
+
+    # Host hygiene rather than monitoring proper, but this is the per-host
+    # playbook and the log is part of the fleet's observability surface: the
+    # edge access log had no rotation at all and stood at 79 MB over 12 days,
+    # world-readable, on a host where every tenant has a local account
+    # (register D30).
+    - name: Rotate and lock down the edge access log
+      ansible.builtin.copy:
+        src: ../monitoring/caddy-logrotate
+        dest: /etc/logrotate.d/caddy
+        mode: "0644"
+
+    - name: Tighten the existing edge access log
+      ansible.builtin.file:
+        path: /var/log/caddy/access.log
+        mode: "0640"
+        owner: caddy
+        group: caddy
+      # The logrotate `create` line only governs files it creates from now on;
+      # the one already on disk keeps its old mode until told otherwise.
+      failed_when: false
 
     - name: Install systemd units
       ansible.builtin.copy:
