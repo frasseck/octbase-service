@@ -189,15 +189,50 @@
         mode: "0644"
       when: install_workstation_extras | bool
 
-    - name: Add the Google Chrome repository
-      ansible.builtin.apt_repository:
-        repo: >-
-          deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.asc]
-          https://dl.google.com/linux/chrome-stable/deb/ stable main
-        filename: google-chrome
+    # deb822_repository's documented requirement on the managed node. Installed
+    # here rather than in host_baseline_packages so a host that serves clients
+    # and wants no extras does not carry it.
+    - name: Install the deb822 sources helper
+      ansible.builtin.apt:
+        name: python3-debian
         state: present
-        update_cache: true
       when: install_workstation_extras | bool
+
+    # deb822_repository, not apt_repository: the latter is deprecated and goes
+    # away in ansible-core 2.25. It writes google-chrome.sources rather than
+    # google-chrome.list, and has no update_cache — hence the explicit refresh
+    # below, without which the extras task cannot resolve google-chrome-stable.
+    - name: Add the Google Chrome repository
+      ansible.builtin.deb822_repository:
+        name: google-chrome
+        types: deb
+        uris: https://dl.google.com/linux/chrome-stable/deb/
+        suites: stable
+        components: main
+        architectures: amd64
+        signed_by: /usr/share/keyrings/google-chrome.asc
+        state: present
+      register: chrome_repo
+      when: install_workstation_extras | bool
+
+    # The .list this task used to write, and the one Chrome's own postinst
+    # writes. Two files for one repository is what apt reports as "configured
+    # multiple times"; the .sources above is now the managed copy. Chrome can
+    # re-add its .list on a later package upgrade — the next run removes it
+    # again, which is the intended steady state rather than a fight worth
+    # picking in /etc/default/google-chrome.
+    - name: Retire the legacy Chrome .list entry
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/google-chrome.list
+        state: absent
+      when: install_workstation_extras | bool
+
+    - name: Refresh the apt cache for the new repository
+      ansible.builtin.apt:
+        update_cache: true
+      when:
+        - install_workstation_extras | bool
+        - chrome_repo.changed
 
     # Per-package, tolerating failures: this list is a capture of one host, and
     # a package that has been renamed or dropped from a later release should
