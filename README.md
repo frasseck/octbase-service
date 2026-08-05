@@ -467,6 +467,14 @@ the run fails rather than creating accounts nobody can log into. The
 allow-list is rewritten on every run, so a bootstrap account like `ubuntu`
 drops out as soon as a run connects as something else.
 
+You add the host's name and `ansible_host` to `inventory/hosts.yml`; the run
+adds the rest. On success it records that host's `ansible_user` and
+`ansible_port: 1012` into its entry, between markers naming the host — so the
+port move does not have to be remembered, and every later playbook reaches the
+server without extra flags. **Commit that change**, and don't hand-edit inside
+the markers: the next run rewrites them. Change the answer instead
+(`-e setup_user=…`) and re-run.
+
 `setup-host.yml` installs the baseline package set (rootless podman and its
 prerequisites, Caddy, fail2ban, quota tooling, diagnosis tools — see
 `playbooks/vars/host-packages.yml`), sets timezone and locale, hardens sshd,
