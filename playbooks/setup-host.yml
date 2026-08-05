@@ -4,10 +4,13 @@
 #   ansible-playbook playbooks/setup-host.yml -e target_host=prod2
 #   ansible-playbook playbooks/setup-host.yml -e target_host=prod2 --check --diff
 #
-# It asks two questions before it starts: which account to connect as, and
-# which accounts may log in over SSH afterwards. Answer them on the command
-# line to skip the prompts (non-interactive runs need this):
-#   … -e setup_user=ubuntu -e admin_users='lfrasseck claude'
+# It asks three questions before it starts: which account to connect as, which
+# accounts may log in over SSH afterwards, and what to name the node. Answer
+# them on the command line to skip the prompts (non-interactive runs need
+# this):
+#   … -e setup_user=ubuntu -e admin_users='lfrasseck claude' \
+#     -e host_fqdn=prod01.ocete.ch
+# An empty host_fqdn leaves the node's current name alone.
 #
 # This is the step inventory/hosts.yml used to describe in prose ("adding a
 # server = ... set up its root edge Caddy with the import line ...") and
@@ -75,6 +78,13 @@
         created if missing and authorized with the SAME key you are connecting
         with. The setup account is always allowed too. Leave empty to allow
         only that account
+      private: false
+      default: ""
+
+    - name: host_fqdn
+      prompt: >-
+        Hostname to give this node, e.g. prod01.ocete.ch. Leave empty to keep
+        the name it already has
       private: false
       default: ""
 
@@ -229,6 +239,69 @@
       when: host_admin_users | length > 0
 
   tasks:
+    # ── Hostname ─────────────────────────────────────────────────────────
+    # A fresh cloud VM carries its provider's generated name, which means
+    # nothing in the fleet: it is what the journal, the monitor's mail and
+    # every shell prompt on the box will say. Answering the prompt empty leaves
+    # it alone, which is what a re-run against an already-named host wants.
+    #
+    # First in the play, deliberately. Every later task runs under sudo, and
+    # sudo prints "unable to resolve host <name>" on every single invocation
+    # when the new name is not also in /etc/hosts — so the rename and the hosts
+    # entry belong together, and ahead of everything else.
+    - name: Name this node
+      when: host_fqdn | length > 0
+      block:
+        - name: The hostname must be a valid name
+          ansible.builtin.assert:
+            that:
+              - host_fqdn is match('^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$')
+              - host_fqdn | length <= 253
+            fail_msg: >-
+              '{{ host_fqdn }}' is not a usable hostname. Expected labels of
+              letters, digits and hyphens separated by dots, e.g.
+              prod01.ocete.ch — no spaces, no underscores, no leading or
+              trailing dot or hyphen.
+            quiet: true
+
+        - name: Set the hostname
+          ansible.builtin.hostname:
+            # The short label only: /etc/hostname is Debian's short name, and
+            # the FQDN is what /etc/hosts below supplies — which is where
+            # `hostname -f` and anything doing a reverse lookup read it from.
+            name: "{{ host_fqdn.split('.') | first }}"
+
+        - name: Resolve that name locally
+          ansible.builtin.lineinfile:
+            path: /etc/hosts
+            # The 127.0.1.1 convention, not 127.0.0.1: Debian keeps the
+            # machine's own name on a separate loopback address so that
+            # removing it cannot break localhost itself.
+            regexp: '^127\.0\.1\.1\s'
+            line: "127.0.1.1 {{ host_fqdn }} {{ host_fqdn.split('.') | first }}"
+            # Ubuntu's images ship this line; an image that does not gets one
+            # rather than having it appended below unrelated entries.
+            insertafter: '^127\.0\.0\.1\s'
+
+        - name: Look for cloud-init
+          ansible.builtin.stat:
+            path: /etc/cloud/cloud.cfg.d
+          register: cloud_init_dir
+
+        # Without this, cloud-init re-applies the provider's metadata hostname
+        # at every boot and silently undoes both tasks above — and this
+        # playbook's own quota work makes a reboot part of the normal path, so
+        # the rename would come back undone at exactly the moment nobody is
+        # watching for it.
+        - name: Stop cloud-init reverting the hostname at boot
+          ansible.builtin.copy:
+            dest: /etc/cloud/cloud.cfg.d/99-octbase-hostname.cfg
+            mode: "0644"
+            content: |
+              # Managed by octbase-service / setup-host.yml
+              preserve_hostname: true
+          when: cloud_init_dir.stat.exists
+
     # ── Packages ─────────────────────────────────────────────────────────
     - name: Refresh the apt cache
       ansible.builtin.apt:
@@ -698,6 +771,8 @@
         msg: >-
           {{
             ['Host ' ~ inventory_hostname ~ ' is provisioned.']
+            + (['', 'Named ' ~ host_fqdn ~ ' — cloud-init is pinned so a reboot keeps it.']
+               if host_fqdn | length > 0 else [])
             + (['',
                 '⚠ SSH now listens on port ' ~ ssh_port ~ '. This session survives, but every',
                 '  LATER connection must use it. inventory/hosts.yml has been updated with',
