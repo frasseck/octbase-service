@@ -27,34 +27,17 @@ playbooks locally to "help" — that is an operator decision.
 ## Commands
 
 ```bash
-./ledger/ledger.py new <name> --display "…" --edition business [--no-jira-import] \
-    --max-users N --contact a@b.c        # scaffold a client file, allocate ports
-./ledger/ledger.py list                  # client table
-./ledger/ledger.py validate              # names, editions, add-on rules, port collisions
-./ledger/ledger.py next-ports            # next free frontend/api/postgres triplet
-
 # Read-only: every version stamp (octbase_version + each client's app_version)
 # vs the app repo's tags and CHANGELOG (C4/C13). WARN = pinned behind, FAIL = broken.
 scripts/check-version-drift.py
 
 # Syntax-check YAML and Jinja2 without Ansible (see the playbook-check skill)
 python3 -c "import yaml,glob; [yaml.safe_load_all(open(f).read()) and print('ok', f) for f in glob.glob('playbooks/*.yml')]"
-
-# From the admin machine only:
-ansible-playbook playbooks/setup-host.yml -e target_host=<host>   # provision a NEW fleet host (packages, ssh, firewall, edge Caddy)
-ansible-playbook playbooks/create-instance.yml -e client=<name>   # create OR update (idempotent)
-ansible-playbook playbooks/sync-instance.yml -e client=<name>     # sync code to a branch (default main), rebuild + restart
-ansible-playbook playbooks/remove-instance.yml -e client=<name> -e confirm=<name>
-ansible-playbook playbooks/migrate-instance.yml -e client=<name>   # move an installation on ONE host (prompts for the source)
-ansible-playbook playbooks/migrate-host.yml -e client=<name> -e source_host=<old> -e confirm=<name>  # move to ANOTHER host (ledger host: = target)
-ansible-playbook playbooks/suspend-instance.yml -e client=<name> -e confirm=<name>  # ledger status must be 'suspended'
-ansible-playbook playbooks/reset-user-password.yml -e client=<name> -e email=<user>  # reset one app user's password in the DB; prints it once
-ansible-playbook playbooks/set-max-users.yml -e client=<name>
-ansible-playbook playbooks/set-resources.yml -e client=<name>     # apply memory/CPU/tasks caps + disk quota, no redeploy
-ansible-playbook playbooks/set-version.yml -e client=<name>       # deploy the ledger's app_version tag, stamp + verify via /api/v1/version
-ansible-playbook playbooks/install-monitoring.yml                 # all hosts
-ansible-playbook playbooks/install-backup.yml                     # all hosts (nightly per-client backup)
 ```
+
+The `ledger.py` CLI and every `ansible-playbook` invocation (with worked
+examples) are documented in the [README](README.md) — playbooks run from the
+admin machine only, not from here.
 
 There is no CI, test suite, or linter in this repo.
 
