@@ -78,6 +78,11 @@
         file: "../ledger/clients/{{ client }}.yml"
         name: client_ledger_scope
 
+    - name: Check and announce the client's host
+      ansible.builtin.include_tasks: tasks/assert-client-host.yml
+      vars:
+        client_host: "{{ client_ledger_scope.host | default(default_client_host) }}"
+
     - name: Scope the play to the client's host
       ansible.builtin.meta: end_host
       when: inventory_hostname != (client_ledger_scope.host | default(default_client_host))
@@ -469,6 +474,11 @@
     - name: Normalize client ledger variable
       ansible.builtin.set_fact:
         client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
+
+    - name: Check and announce the client's host
+      ansible.builtin.include_tasks: tasks/assert-client-host.yml
+      vars:
+        client_host: "{{ client_ledger.host | default(default_client_host) }}"
 
     - name: Scope the play to the client's host
       ansible.builtin.meta: end_host

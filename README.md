@@ -52,6 +52,8 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `ledger/ledger.py` | Ledger CLI: `new`, `list`, `validate`, `next-ports` |
 | `scripts/check-version-drift.py` | Read-only: every version stamp vs the app repo's tags + changelog (C4/C13) |
 | `inventory/hosts.yml` | The production host(s) Ansible connects to |
+| `inventory/hosts.yml.template` | Pristine reference copy of the above — `diff` a mangled inventory against it, or copy it back to start over |
+| `playbooks/tasks/assert-client-host.yml` | Shared pre-flight for every per-client play: the target host must be in the inventory, and the run names the machine it will touch |
 | `playbooks/setup-host.yml` | Provision a **new fleet host** from a stock Ubuntu server (packages, SSH, firewall, edge Caddy) |
 | `playbooks/vars/host-packages.yml` | The reference host's package capture: baseline / workstation extras / base image |
 | `inventory/group_vars/all/main.yml` | Platform-wide defaults (domain, SMTP relay, source path, …) |
@@ -518,8 +520,13 @@ backup sync (`backup_offhost_cmd`).
 ### Move an instance to another host
 
 Placement is the `host:` field in the ledger (see `inventory/hosts.yml` for
-valid names; the model is `docs/fleet-concept.md`). To move client `acme`
-from `prod` to `prod2`:
+valid names; the model is `docs/fleet-concept.md`). Every per-client playbook
+runs against `octbase_hosts` and ends the play on every host that is not the
+client's, so it prints the target it resolved — client, host, `ansible_host`,
+port, account — before it changes anything, and **fails** if the ledger's
+`host:` is not a name in the inventory. That check exists because without it
+the mismatch ends the play everywhere and the run reports success having
+touched nothing (OCT-48). To move client `acme` from `prod` to `prod2`:
 
 ```bash
 # 1) edit ledger/clients/acme.yml → host: prod2, validate, commit

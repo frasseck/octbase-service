@@ -1,0 +1,65 @@
+---
+# The host a per-client play is about to act on must exist in the inventory —
+# and the run must say which machine that is.
+#
+# Included by every per-client playbook, immediately BEFORE its
+# `meta: end_host` scoping task. Caller passes the resolved host name:
+#
+#     - name: Check and announce the client's host
+#       ansible.builtin.include_tasks: tasks/assert-client-host.yml
+#       vars:
+#         client_host: "{{ client_ledger.host | default(default_client_host) }}"
+#
+# Why the assert (OCT-48): those playbooks scope themselves by ending the play
+# on every host that is not the client's. If the ledger's `host:` names
+# something that is not in inventory/hosts.yml — a typo, a host dropped from
+# the fleet, or an inventory corrupted by a bad write — the comparison is false
+# EVERYWHERE, every host ends, and the playbook finishes green having touched
+# nothing. An operator reads that as "the client was updated". Only
+# create-instance.yml, sync-instance.yml and migrate-host.yml checked for it;
+# the other seven no-oped silently.
+#
+# Why the announce: which machine a run lands on is decided three steps away
+# from the command line (ledger `host:` → inventory entry → ansible_host /
+# ansible_port), and nothing in the output used to name it. Now the target is
+# stated before anything is changed, so a wrong host is visible in the run
+# rather than in its aftermath.
+#
+# Deliberately does NOT contain the `meta: end_host` itself: `meta` inside an
+# included file is not something this repo can test (no Ansible on the host it
+# ships from), and the scoping task is load-bearing. It stays inline, where it
+# has always worked, one task below this include.
+
+- name: Client host must exist in the inventory
+  ansible.builtin.assert:
+    that: client_host in groups['octbase_hosts']
+    fail_msg: >-
+      Host '{{ client_host }}' is not in inventory/hosts.yml
+      (known: {{ groups['octbase_hosts'] | default([]) | join(', ') }}).
+      Every play below scopes itself to that host, so without this check the
+      run would end on every host and report success having done nothing.
+      Fix the client's ledger entry — or the inventory, if the host is real
+      but missing (inventory/hosts.yml.template is the reference shape).
+    quiet: true
+
+# Only on the machine the play will actually run on, so a fleet of hosts
+# produces one line, not one per host.
+#
+# `| default(x, true)` rather than a bare default on all three: an unset
+# ansible_port/ansible_user reaches a template as None at least as often as it
+# is undefined (the connection plugin defines them), and a bare default only
+# fires on undefined — which would print `ocete.ch:None as None` on exactly the
+# hosts this repo did not provision.
+- name: Target
+  ansible.builtin.debug:
+    msg: >-
+      {{
+        ['client    : ' ~ (client | default('(none)')),
+         'host      : ' ~ client_host,
+         'reaching  : '
+           ~ (hostvars[client_host].ansible_host | default(client_host, true))
+           ~ ':' ~ (hostvars[client_host].ansible_port | default(22, true))
+           ~ ' as ' ~ (hostvars[client_host].ansible_user
+                       | default('whatever your ssh config resolves', true))]
+      }}
+  when: inventory_hostname == client_host
