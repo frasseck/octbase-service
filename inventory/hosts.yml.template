@@ -1,0 +1,66 @@
+# Pristine reference copy of inventory/hosts.yml — never written to.
+#
+# hosts.yml is the live file: it is committed, and setup-host.yml writes each
+# provisioned host's connection settings into it. This template is the shape
+# that file is supposed to have, kept beside it so there is always something
+# to compare a mangled inventory against:
+#
+#   diff -u inventory/hosts.yml.template inventory/hosts.yml
+#   cp inventory/hosts.yml.template inventory/hosts.yml   # start over
+#
+# ⚠ Restoring from this template DISCARDS the ansible_user/ansible_port that
+# setup-host.yml recorded. A provisioned host has sshd on 1012, not 22, so a
+# restored file cannot reach it until those keys are back — read them off
+# `git diff inventory/hosts.yml` before you overwrite, or re-run
+# setup-host.yml (it rewrites them).
+#
+# ── The file itself ──────────────────────────────────────────────────────
+#
+# The production host(s) that run client stacks. One entry per server; a
+# client's ledger entry pins it to one of these names via its `host:` field
+# (default: default_client_host in group_vars). Adjust ansible_host to the
+# real server address (the playbooks are run from a local admin machine and
+# connect over SSH).
+#
+# Adding a server = add it here, then:
+#   ansible-playbook playbooks/setup-host.yml -e target_host=<name>
+#   ansible-playbook playbooks/install-monitoring.yml
+#   ansible-playbook playbooks/install-backup.yml
+# setup-host.yml does what this comment used to leave to hand-work: the
+# baseline packages, sshd/firewall/fail2ban, and the root edge Caddy with its
+# `import /etc/octbase/edge/*.caddy` line. Then place clients on the host via
+# `host:` in their ledger entries (docs/fleet-concept.md; runbook in the
+# README, "Add a host to the fleet").
+#
+# You write the name and ansible_host; setup-host.yml writes the rest. After
+# it provisions a host it records that host's `ansible_user` (the account it
+# was provisioned from) and `ansible_port` (1012 — it moves sshd there) into
+# the entry below, between markers naming the host. Commit that change: it is
+# how every other playbook then reaches the server. Editing inside those
+# markers is pointless, the next run rewrites it; edit the prompts instead
+# (`-e setup_user=…`) and re-run.
+#
+# A host this repo did NOT provision has neither key, and connects as whatever
+# your `ssh <host>` already resolves to, on port 22. Root login is refused
+# everywhere; `become: true` (set at each play) elevates via sudo, so that
+# account needs passwordless sudo or a run with --ask-become-pass.
+#
+# Indentation is load-bearing: setup-host.yml anchors its insert on
+# `^    <name>:$`, i.e. a host name at exactly four spaces, under `hosts:` at
+# two. Re-indent this file and the anchor misses.
+octbase_hosts:
+  hosts:
+    prod:
+      ansible_host: ocete.ch
+    # prod2:
+    #   ansible_host: prod2.ocete.ch
+
+# A provisioned entry looks like this — you wrote the first two lines,
+# setup-host.yml wrote everything between the markers:
+#
+#     prod2:
+#       ansible_host: prod2.ocete.ch
+#       # BEGIN managed by setup-host.yml for prod2
+#       ansible_user: ubuntu
+#       ansible_port: 1012
+#       # END managed by setup-host.yml for prod2

@@ -48,6 +48,11 @@
           Ledger entry for '{{ client | default('?') }}' is missing, malformed
           or not 'active' — run ./ledger/ledger.py validate.
 
+    - name: Check and announce the client's host
+      ansible.builtin.include_tasks: tasks/assert-client-host.yml
+      vars:
+        client_host: "{{ client_ledger.host | default(default_client_host) }}"
+
     - name: Scope the play to the client's host
       ansible.builtin.meta: end_host
       when: inventory_hostname != (client_ledger.host | default(default_client_host))

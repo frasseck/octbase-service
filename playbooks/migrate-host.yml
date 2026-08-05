@@ -93,6 +93,11 @@
           first) and differ from source_host — both must exist in
           inventory/hosts.yml.
 
+    - name: Check and announce the client's host
+      ansible.builtin.include_tasks: tasks/assert-client-host.yml
+      vars:
+        client_host: "{{ source_host }}"
+
     - name: Scope phase 1 to the source host
       ansible.builtin.meta: end_host
       when: inventory_hostname != source_host
@@ -301,6 +306,11 @@
     - name: Normalize client ledger variable
       ansible.builtin.set_fact:
         client_ledger: "{{ client_ledger_loaded.ansible_facts.client_ledger }}"
+
+    - name: Check and announce the client's host
+      ansible.builtin.include_tasks: tasks/assert-client-host.yml
+      vars:
+        client_host: "{{ client_ledger.host | default(default_client_host) }}"
 
     - name: Scope phase 3 to the target host
       ansible.builtin.meta: end_host
