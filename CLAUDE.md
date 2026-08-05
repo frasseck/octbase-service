@@ -17,7 +17,8 @@ repos (see platform-overview §5).
 
 **Where this checkout runs:** on the production host itself, but the
 playbooks are designed to run **from a separate admin machine** over SSH
-(`inventory/hosts.yml` targets `root@ocete.ch`) — and **Ansible is not
+(`inventory/hosts.yml` targets `ocete.ch` as an unprivileged sudo account —
+root login is refused; plays elevate with `become: true`) — and **Ansible is not
 installed on this host**. So from here you can edit playbooks/templates,
 manage the ledger, and inspect live host state (stacks, timers, backups),
 but you cannot execute playbooks. Don't try to install Ansible or run

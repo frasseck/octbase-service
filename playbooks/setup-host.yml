@@ -65,11 +65,21 @@
     # new port. If it is not already in your ~/.ssh/config, add it to the
     # host's inventory entry as ansible_port before the next run.
     ssh_port: 1012
-    # Accounts allowed to log in over SSH. Must include the account you run
-    # Ansible as — asserted below rather than discovered too late.
-    ssh_allow_users:
+    # Accounts that keep permanent SSH access to this host.
+    host_admin_users:
       - lfrasseck
       - claude
+    # What actually lands in AllowUsers: the admins above plus the account this
+    # run connects as. The run therefore cannot lock itself out, which is what
+    # makes provisioning from any SSH account work — `-e ansible_user=ubuntu`
+    # on a stock cloud image, say. A bootstrap account added this way is not
+    # permanent: the drop-in is rewritten from this list on every run, so once
+    # a host_admin_users account can log in, the next run drops ubuntu again.
+    # Override wholesale with -e '{"ssh_allow_users": [...]}' — the assert
+    # below is what stops that dropping your own account by accident.
+    #
+    # Evaluated lazily, so it depends on the probe in pre_tasks having run.
+    ssh_allow_users: "{{ (host_admin_users + [ssh_account.stdout]) | unique }}"
     ssh_max_auth_tries: 5
     ssh_client_alive_interval: 3600
 
@@ -100,6 +110,22 @@
     configure_disk_quota: true
 
   pre_tasks:
+    # ansible_facts cannot answer "who is Ansible connected as": play-level
+    # `become: true` covers the fact-gathering task too, so
+    # ansible_facts['user_id'] reads 'root' on every run whatever the SSH
+    # account is. Everything below that reasons about the connecting account —
+    # both asserts and ssh_allow_users — reads this probe instead, which is
+    # deliberately the one task in the play that does not become.
+    - name: Identify the account this run connects as
+      ansible.builtin.command: id -un
+      become: false
+      changed_when: false
+      # Reads nothing but the connection's own identity, and everything after
+      # it is undefined without it — so it must run under --check too, where
+      # command tasks are otherwise skipped.
+      check_mode: false
+      register: ssh_account
+
     - name: Only Ubuntu is supported
       ansible.builtin.assert:
         that:
@@ -113,15 +139,31 @@
           package set — so an older or different distribution needs the
           playbook read through, not just re-run.
 
+    # The sshd drop-in below sets PermitRootLogin no, and that keyword beats
+    # AllowUsers — so a run connected as root hardens the host into refusing
+    # the very account it is using, and no allow-list can buy it back.
+    - name: This playbook is run from an unprivileged account, not as root
+      ansible.builtin.assert:
+        that: ssh_account.stdout != 'root'
+        fail_msg: >-
+          Connected as root. This playbook sets PermitRootLogin no, so the next
+          root connection would be refused whatever AllowUsers says. Re-run
+          connected as an unprivileged account that can sudo, e.g.
+          -e ansible_user=ubuntu on a stock cloud image (add --ask-become-pass
+          unless its sudo is passwordless).
+        quiet: true
+
     # An AllowUsers list without the connecting account locks the fleet out of
     # its own host at the next connection — and the run that did it looks
-    # entirely successful, because the current connection survives.
+    # entirely successful, because the current connection survives. The
+    # computed ssh_allow_users always contains that account; this is what
+    # catches an -e override that does not.
     - name: The SSH allow-list must contain the account running this playbook
       ansible.builtin.assert:
-        that: ansible_facts['user_id'] in ssh_allow_users
+        that: ssh_account.stdout in ssh_allow_users
         fail_msg: >-
           ssh_allow_users is {{ ssh_allow_users | join(', ') }}, which does not
-          include '{{ ansible_facts['user_id'] }}' — the account this run is
+          include '{{ ssh_account.stdout }}' — the account this run is
           connected as. Applying it would leave you unable to reconnect. Add
           the account (-e '{"ssh_allow_users": [...]}') and re-run.
 
@@ -475,7 +517,9 @@
             + (['',
                 '⚠ SSH now listens on port ' ~ ssh_port ~ '. This session survives, but the',
                 '  NEXT connection must use it — set ansible_port: ' ~ ssh_port ~ ' on this',
-                '  host in inventory/hosts.yml, or add it to your ~/.ssh/config.']
+                '  host in inventory/hosts.yml, or add it to your ~/.ssh/config.',
+                '  Accounts AllowUsers now permits: ' ~ ssh_allow_users | join(', ') ~ '.',
+                '  ' ~ ssh_account.stdout ~ ' is in that list because this run connected as it.']
                if sshd_conf.changed else [])
             + (['',
                 '⚠ Disk quotas are configured in fstab but NOT yet active: the filesystem',

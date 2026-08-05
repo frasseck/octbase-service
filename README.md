@@ -97,8 +97,12 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
   machine (`octbase_release_cache`). The production host never talks to GitHub.
 - A checkout of the app repo at `octbase_src` — no longer the client deploy
   source, only where `install-monitoring.yml` reads `check-health.sh` from.
-- SSH root access to the production host (or a sudo user — then set
-  `ansible_user` accordingly and add `rsync_path: sudo rsync` to the sync task).
+- SSH access to the production host as an **unprivileged account that can
+  sudo** — root login is refused there (`PermitRootLogin no`, set by
+  `setup-host.yml`), and every play elevates with `become: true`. The account
+  comes from your `~/.ssh/config` or from `-e ansible_user=<account>`;
+  `inventory/hosts.yml` pins none on purpose. Add `--ask-become-pass` unless
+  that account's sudo is passwordless.
 
 **Production host:** `podman`, `podman-compose`, `loginctl` (systemd),
 `rsync`, `curl`. The edge reverse proxy (Caddy) is managed outside this repo;
@@ -430,7 +434,11 @@ A stock Ubuntu 24.04+ server becomes a fleet host in two steps:
 
 ```bash
 # 1) add the server to inventory/hosts.yml (name + ansible_host), then:
-ansible-playbook playbooks/setup-host.yml -e target_host=prod2
+#    Connect as any sudo-capable account — on a stock cloud image that is
+#    usually `ubuntu`. The run adds whichever account it connects as to the
+#    host's SSH AllowUsers, so it cannot lock itself out; once one of
+#    host_admin_users can log in, a later run drops the bootstrap account.
+ansible-playbook playbooks/setup-host.yml -e target_host=prod2 -e ansible_user=ubuntu
 ansible-playbook playbooks/install-monitoring.yml
 ansible-playbook playbooks/install-backup.yml
 ```
