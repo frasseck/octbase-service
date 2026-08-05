@@ -439,16 +439,27 @@ ansible-playbook playbooks/install-monitoring.yml
 ansible-playbook playbooks/install-backup.yml
 ```
 
-`setup-host.yml` asks two questions before it starts: **which account to
+`setup-host.yml` asks three questions before it starts: **which account to
 connect as** (must already exist on the server and be able to sudo — on a
-stock cloud image that is `ubuntu`) and **which admin accounts to create**,
-space-separated. Answer either on the command line to skip its prompt, which
-is what a non-interactive run needs:
+stock cloud image that is `ubuntu`), **which admin accounts to create**,
+space-separated, and **what to name the node** (empty keeps its current name).
+Answer any of them on the command line to skip that prompt, which is what a
+non-interactive run needs:
 
 ```bash
 ansible-playbook playbooks/setup-host.yml -e target_host=prod2 \
-    -e setup_user=ubuntu -e admin_users='lfrasseck claude'
+    -e setup_user=ubuntu -e admin_users='lfrasseck claude' \
+    -e host_fqdn=prod2.ocete.ch
 ```
+
+**Naming the node** writes the short label to `/etc/hostname` and maps
+`127.0.1.1` to the FQDN plus that label in `/etc/hosts` — both, because sudo
+prints `unable to resolve host …` on every invocation otherwise. It also drops
+`preserve_hostname: true` into `/etc/cloud/cloud.cfg.d/`, without which
+cloud-init re-applies the provider's metadata hostname at the next boot and
+silently undoes the rename. This is the node's own identity only; it has no
+bearing on which client domains the host serves, which come from the ledger
+and the edge snippets.
 
 **Logging in afterwards:** SSH moves to port 1012 and accepts keys only, so
 `ssh -p 1012 <account>@<host>` where `<account>` is any account you named —
