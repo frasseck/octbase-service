@@ -4,6 +4,11 @@
 #   ansible-playbook playbooks/setup-host.yml -e target_host=prod2
 #   ansible-playbook playbooks/setup-host.yml -e target_host=prod2 --check --diff
 #
+# It asks two questions before it starts: which account to connect as, and
+# which accounts may log in over SSH afterwards. Answer them on the command
+# line to skip the prompts (non-interactive runs need this):
+#   … -e setup_user=ubuntu -e admin_users='lfrasseck claude'
+#
 # This is the step inventory/hosts.yml used to describe in prose ("adding a
 # server = ... set up its root edge Caddy with the import line ...") and
 # nothing in this repo performed: it turns a stock Ubuntu server into a host
@@ -50,6 +55,29 @@
   hosts: "{{ target_host }}"
   become: true
 
+  # Asked rather than baked in: which account provisions a host, and which
+  # accounts keep access to it afterwards, differ per host and per operator —
+  # and getting the second one wrong is how a host ends up unreachable. Both
+  # prompts are SKIPPED when the variable arrives via -e, so scripted and
+  # non-interactive runs keep working:
+  #   -e setup_user=ubuntu -e admin_users='lfrasseck claude'
+  vars_prompt:
+    - name: setup_user
+      prompt: >-
+        SSH account to run this playbook as. It must already exist on the host
+        and be able to sudo (stock Ubuntu cloud image: ubuntu)
+      private: false
+      default: ubuntu
+
+    - name: admin_users
+      prompt: >-
+        Admin accounts to create and allow over SSH, space-separated. Each is
+        created if missing and authorized with the SAME key you are connecting
+        with. The setup account is always allowed too. Leave empty to allow
+        only that account
+      private: false
+      default: ""
+
   vars_files:
     - vars/host-packages.yml
 
@@ -65,18 +93,19 @@
     # new port. If it is not already in your ~/.ssh/config, add it to the
     # host's inventory entry as ansible_port before the next run.
     ssh_port: 1012
-    # Accounts that keep permanent SSH access to this host.
-    host_admin_users:
-      - lfrasseck
-      - claude
-    # What actually lands in AllowUsers: the admins above plus the account this
-    # run connects as. The run therefore cannot lock itself out, which is what
-    # makes provisioning from any SSH account work — `-e ansible_user=ubuntu`
-    # on a stock cloud image, say. A bootstrap account added this way is not
-    # permanent: the drop-in is rewritten from this list on every run, so once
-    # a host_admin_users account can log in, the next run drops ubuntu again.
-    # Override wholesale with -e '{"ssh_allow_users": [...]}' — the assert
-    # below is what stops that dropping your own account by accident.
+    # The connection account for this play, from the prompt above. Named here
+    # and nowhere else — inventory/hosts.yml deliberately pins no ansible_user,
+    # and an explicit -e ansible_user still wins over this.
+    ansible_user: "{{ setup_user }}"
+
+    # Accounts that keep SSH access to this host, from the prompt above.
+    host_admin_users: "{{ admin_users.split() }}"
+    # What actually lands in AllowUsers: those accounts plus the one this run
+    # connects as. The run therefore cannot lock itself out — which is what
+    # makes provisioning from a stock cloud image's `ubuntu` work. A bootstrap
+    # account added this way is not permanent: the drop-in is rewritten from
+    # this list on every run, so once an admin account can log in, a later run
+    # that no longer connects as ubuntu drops it.
     #
     # Evaluated lazily, so it depends on the probe in pre_tasks having run.
     ssh_allow_users: "{{ (host_admin_users + [ssh_account.stdout]) | unique }}"
@@ -166,6 +195,38 @@
           include '{{ ssh_account.stdout }}' — the account this run is
           connected as. Applying it would leave you unable to reconnect. Add
           the account (-e '{"ssh_allow_users": [...]}') and re-run.
+
+    # Where the setup account's authorized_keys lives — the admin accounts are
+    # created from it further down. Read from passwd rather than assumed to be
+    # /home/<user>, which is not true for every account a cloud image ships.
+    - name: Read the host's account database
+      ansible.builtin.getent:
+        database: passwd
+
+    - name: Locate the setup account's home directory
+      ansible.builtin.set_fact:
+        setup_home: "{{ ansible_facts['getent_passwd'][ssh_account.stdout][4] }}"
+
+    - name: Look for the key this run is authenticating with
+      ansible.builtin.stat:
+        path: "{{ setup_home }}/.ssh/authorized_keys"
+      register: setup_keys_file
+
+    # Without it there is nothing to authorize the new accounts with, and they
+    # would be created able to log in with no key — locked out on a host whose
+    # sshd this run is about to set to keys-only.
+    - name: The setup account must have an authorized_keys to copy
+      ansible.builtin.assert:
+        that: setup_keys_file.stat.exists
+        fail_msg: >-
+          {{ ssh_account.stdout }} has no {{ setup_home }}/.ssh/authorized_keys,
+          so there is no key to give {{ host_admin_users | join(', ') }}. This
+          run is connected by some other means (a password, or an agent-forwarded
+          certificate). Put the operators' public key in that file first, or
+          answer the admin-accounts prompt empty and allow only
+          {{ ssh_account.stdout }}.
+        quiet: true
+      when: host_admin_users | length > 0
 
   tasks:
     # ── Packages ─────────────────────────────────────────────────────────
@@ -316,6 +377,62 @@
         content: |
           # Managed by octbase-service / setup-host.yml
           LANG={{ host_locale }}
+
+    # ── Admin accounts ───────────────────────────────────────────────────
+    # Created here, before sshd is hardened, so AllowUsers never names an
+    # account that does not exist. Each is authorized with the setup account's
+    # authorized_keys — necessarily a working key, since it is the one this run
+    # connected with. No key material enters the repo and nothing external
+    # (GitHub, a keyserver) sits in the provisioning path.
+    #
+    # Worth being explicit about: these are separate identities for audit — own
+    # uid, own home, own journal entries — but NOT separate credentials. One
+    # key opens all of them until someone replaces an individual's
+    # authorized_keys, which is why the authorization below is non-exclusive:
+    # a key an operator adds by hand survives every later run.
+    - name: Read the setup account's authorized keys
+      ansible.builtin.slurp:
+        src: "{{ setup_home }}/.ssh/authorized_keys"
+      register: setup_authorized_keys
+      when: host_admin_users | length > 0
+
+    - name: Create the admin accounts
+      ansible.builtin.user:
+        name: "{{ item }}"
+        groups: sudo
+        append: true
+        shell: /bin/bash
+        create_home: true
+        # Locked, not empty: these accounts authenticate by key only, and sshd
+        # refuses password auth anyway. The sudoers drop-in below is what keeps
+        # a locked password from also meaning "cannot sudo".
+        password: "!"
+      loop: "{{ host_admin_users }}"
+
+    - name: Authorize them with the key this run connected with
+      ansible.posix.authorized_key:
+        user: "{{ item }}"
+        key: "{{ setup_authorized_keys.content | b64decode }}"
+        exclusive: false
+      loop: "{{ host_admin_users }}"
+
+    # An account with a locked password in the sudo group can log in and then
+    # do nothing: sudo asks for a password it does not have. Only the accounts
+    # this playbook creates are listed — never the connecting account, whose
+    # sudo rules are the image's or the operator's business.
+    - name: Let the admin accounts sudo without a password
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/90-octbase-admins
+        mode: "0440"
+        content: |
+          # Managed by octbase-service / setup-host.yml
+          {% for account in host_admin_users %}
+          {{ account }} ALL=(ALL) NOPASSWD:ALL
+          {% endfor %}
+        # A malformed sudoers file can cost every account its privileges; this
+        # refuses to write one.
+        validate: /usr/sbin/visudo -cf %s
+      when: host_admin_users | length > 0
 
     # ── SSH ──────────────────────────────────────────────────────────────
     - name: Harden sshd
@@ -553,8 +670,13 @@
                 '⚠ SSH now listens on port ' ~ ssh_port ~ '. This session survives, but the',
                 '  NEXT connection must use it — set ansible_port: ' ~ ssh_port ~ ' on this',
                 '  host in inventory/hosts.yml, or add it to your ~/.ssh/config.',
-                '  Accounts AllowUsers now permits: ' ~ ssh_allow_users | join(', ') ~ '.',
-                '  ' ~ ssh_account.stdout ~ ' is in that list because this run connected as it.']
+                '',
+                '  Log in with:  ssh -p ' ~ ssh_port ~ ' <account>@' ~ (ansible_host | default(inventory_hostname)),
+                '  where <account> is one of: ' ~ ssh_allow_users | join(', ') ~ '.',
+                '  ' ~ ssh_account.stdout ~ ' is in that list because this run connected as it.',
+                '  Keys only — password authentication is off. The created accounts',
+                '  (' ~ (host_admin_users | join(', ') or 'none') ~ ') carry the same key this run used,',
+                '  so give an operator their own by replacing that account\'s authorized_keys.']
                if sshd_conf.changed else [])
             + (['',
                 '⚠ Disk quotas are configured in fstab but NOT yet active: the filesystem',

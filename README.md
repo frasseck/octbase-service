@@ -434,14 +434,38 @@ A stock Ubuntu 24.04+ server becomes a fleet host in two steps:
 
 ```bash
 # 1) add the server to inventory/hosts.yml (name + ansible_host), then:
-#    Connect as any sudo-capable account — on a stock cloud image that is
-#    usually `ubuntu`. The run adds whichever account it connects as to the
-#    host's SSH AllowUsers, so it cannot lock itself out; once one of
-#    host_admin_users can log in, a later run drops the bootstrap account.
-ansible-playbook playbooks/setup-host.yml -e target_host=prod2 -e ansible_user=ubuntu
+ansible-playbook playbooks/setup-host.yml -e target_host=prod2
 ansible-playbook playbooks/install-monitoring.yml
 ansible-playbook playbooks/install-backup.yml
 ```
+
+`setup-host.yml` asks two questions before it starts: **which account to
+connect as** (must already exist on the server and be able to sudo — on a
+stock cloud image that is `ubuntu`) and **which admin accounts to create**,
+space-separated. Answer either on the command line to skip its prompt, which
+is what a non-interactive run needs:
+
+```bash
+ansible-playbook playbooks/setup-host.yml -e target_host=prod2 \
+    -e setup_user=ubuntu -e admin_users='lfrasseck claude'
+```
+
+**Logging in afterwards:** SSH moves to port 1012 and accepts keys only, so
+`ssh -p 1012 <account>@<host>` where `<account>` is any account you named —
+or the setup account, which is always allowed so a run cannot lock itself out.
+Each named account is created if missing (sudo group, locked password,
+passwordless sudo via `/etc/sudoers.d/90-octbase-admins`) and authorized with
+**the setup account's own `authorized_keys`** — necessarily a key that works,
+since it is the one the run connected with. So the key that provisioned the
+host opens every admin account on it: they are separate identities for audit,
+not separate credentials. Give an operator their own by replacing that
+account's `authorized_keys` afterwards — the playbook adds keys without
+removing them, so a hand-added key survives later runs.
+
+If the setup account has no `authorized_keys` (you connected by password),
+the run fails rather than creating accounts nobody can log into. The
+allow-list is rewritten on every run, so a bootstrap account like `ubuntu`
+drops out as soon as a run connects as something else.
 
 `setup-host.yml` installs the baseline package set (rootless podman and its
 prerequisites, Caddy, fail2ban, quota tooling, diagnosis tools — see
