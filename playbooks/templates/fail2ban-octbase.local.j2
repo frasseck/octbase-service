@@ -1,0 +1,32 @@
+# Ansible managed — octbase-service / setup-host.yml
+# fail2ban jail for the fleet host's SSH.
+#
+# `port` is the REAL sshd port, not the symbolic name `ssh`. fail2ban resolves
+# `ssh` through /etc/services, which says 22 — so on a host whose sshd listens
+# elsewhere, a jail written as `port = ssh` installs a ban rule scoped to a
+# port nothing is listening on, and the banned address keeps knocking on the
+# real one. prod is configured that way today (finding OCT-40).
+
+[DEFAULT]
+# Match prod: bans are enforced through nftables, not iptables. fail2ban
+# ships both; picking explicitly keeps the jail from depending on which
+# backend fail2ban happens to autodetect.
+banaction = nftables
+banaction_allports = nftables[type=allports]
+
+[sshd]
+enabled = true
+# systemd backend: reads the journal, so the jail does not depend on
+# rsyslog writing /var/log/auth.log.
+backend = systemd
+journalmatch = _SYSTEMD_UNIT=ssh.service + _COMM=sshd
+port = {{ ssh_port }}
+filter = sshd
+maxretry = {{ fail2ban_maxretry }}
+findtime = {{ fail2ban_findtime }}
+bantime = {{ fail2ban_bantime }}
+{% if fail2ban_ignoreip | length > 0 %}
+# Never ban these — an operator locked out of the only admin path is a worse
+# outage than the scan being blocked.
+ignoreip = {{ fail2ban_ignoreip | join(' ') }}
+{% endif %}

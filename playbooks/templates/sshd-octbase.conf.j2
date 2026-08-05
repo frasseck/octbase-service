@@ -1,0 +1,41 @@
+# Ansible managed — octbase-service / setup-host.yml
+# SSH hardening for an Octbase fleet host.
+#
+# A DROP-IN, not an edit of /etc/ssh/sshd_config: Ubuntu's sshd_config begins
+# with `Include /etc/ssh/sshd_config.d/*.conf`, and for these keywords the
+# FIRST value obtained wins — so everything here overrides the stock file
+# without the playbook ever having to parse it.
+#
+# Changing Port here also moves the listening socket, because ssh on Ubuntu
+# 24.04+ is socket-activated: sshd-socket-generator reads this Port and
+# generates ssh.socket's ListenStream. That is why setup-host.yml does a
+# daemon-reload and restarts ssh.socket rather than reloading ssh.service.
+
+# Non-standard port. Not a security control on its own — it removes the
+# background noise of untargeted scanners so the fail2ban jail and the auth
+# log are about real attempts.
+Port {{ ssh_port }}
+
+# Root never logs in over SSH. Administration is `become` from an
+# unprivileged account, which is also what the playbooks assume.
+PermitRootLogin no
+
+# Keys only. The client accounts (oct-*) have no password worth guessing and
+# no reason to accept one.
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+MaxAuthTries {{ ssh_max_auth_tries }}
+
+# Only these accounts may log in. The client accounts are deliberately absent:
+# they exist to own a stack, not to be logged into — reaching one goes through
+# an admin account and `sudo -u`.
+AllowUsers {{ ssh_allow_users | join(' ') }}
+
+ClientAliveInterval {{ ssh_client_alive_interval }}
+ClientAliveCountMax 2
+
+X11Forwarding no
+PrintMotd no
+AcceptEnv LANG LC_* COLORTERM NO_COLOR

@@ -40,6 +40,7 @@ scripts/check-version-drift.py
 python3 -c "import yaml,glob; [yaml.safe_load_all(open(f).read()) and print('ok', f) for f in glob.glob('playbooks/*.yml')]"
 
 # From the admin machine only:
+ansible-playbook playbooks/setup-host.yml -e target_host=<host>   # provision a NEW fleet host (packages, ssh, firewall, edge Caddy)
 ansible-playbook playbooks/create-instance.yml -e client=<name>   # create OR update (idempotent)
 ansible-playbook playbooks/sync-instance.yml -e client=<name>     # sync code to a branch (default main), rebuild + restart
 ansible-playbook playbooks/remove-instance.yml -e client=<name> -e confirm=<name>

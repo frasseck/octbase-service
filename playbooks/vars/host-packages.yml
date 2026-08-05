@@ -1,0 +1,256 @@
+---
+# Package inventory of an Octbase fleet host, captured from the production
+# host `prod` (ocete.ch, Ubuntu 26.04 "resolute") on 2026-08-05 from
+# `apt-mark showmanual` + `snap list`.
+#
+# Every manually-installed package on that host appears in exactly one of the
+# four lists below. Only the first two are ever installed by setup-host.yml —
+# the other two are the record of what makes up the reference host, so that a
+# later "why does prod have X and this host not" question has an answer here
+# instead of needing another archaeology run.
+#
+# Deliberately NOT captured: the ~1100 packages pulled in as dependencies.
+# apt resolves those itself, and pinning them would fight the package manager
+# on the next release.
+
+# ── Installed always ──────────────────────────────────────────────────────
+# The fleet-host baseline: everything a host needs to run client stacks, be
+# administered, and be defended. Nothing here is specific to a distribution
+# flavour or a hosting provider, so this list installs cleanly on any Ubuntu
+# 24.04+ server image.
+host_baseline_packages:
+  # Rootless container runtime. podman + podman-compose are what the client
+  # stacks actually run on; the rest are the rootless prerequisites — they
+  # arrive as podman dependencies today, and are named explicitly because a
+  # rootless host that silently lost one of them fails in ways
+  # (no network, no id mapping, no overlay) that look like application bugs.
+  - podman
+  - podman-compose
+  - uidmap
+  - slirp4netns
+  - fuse-overlayfs
+  - passt
+  - netavark
+  - aardvark-dns
+  - catatonit
+
+  # Public edge. Ubuntu ships Caddy in universe; on a host with Ubuntu Pro
+  # attached the ESM build (same 2.6.2 upstream, security-patched) supersedes
+  # it automatically — which is what prod runs. Neither is a fleet
+  # requirement, so this playbook does not attach Pro.
+  - caddy
+
+  # Perimeter. nftables is not decorative: fail2ban's banaction on prod is
+  # nftables, so the jail installed below is inert without it.
+  - ufw
+  - nftables
+  - fail2ban
+  - unattended-upgrades
+  - apparmor
+  - gnupg
+  - ca-certificates
+  - openssh-server
+  - openssh-client
+
+  # Filesystem + per-account disk quota. `quota` provides setquota, which
+  # create-instance.yml calls for every client — see the quota note in
+  # setup-host.yml.
+  - quota
+  - acl
+  - e2fsprogs
+  - xfsprogs
+  - lvm2
+
+  # Outgoing mail. The fleet monitor's only path to a human is a mail command
+  # (alert_email in group_vars); prod has no MTA at all, which is one of the
+  # three layers behind OCT-33. Installing the client here does not configure
+  # it — that is install-monitoring.yml's job.
+  - msmtp
+  - msmtp-mta
+
+  # Deploy + administration.
+  - git
+  - rsync
+  - curl
+  - wget
+  - python3
+  - python3-venv
+  - sudo
+  - cron
+  - at
+  - logrotate
+  - rsyslog
+  - chrony
+  - locales
+  - software-properties-common
+  - libpam-systemd
+  - uuid-runtime
+  - xz-utils
+  - bash-completion
+  - man-db
+
+  # Diagnosis. Every one of these has been reached for on prod while
+  # debugging a stack; a host without them turns a five-minute look into an
+  # apt install during an incident.
+  - htop
+  - lsof
+  - strace
+  - tmux
+  - vim
+  - nano
+  - less
+  - psmisc
+  - sysstat
+  - net-tools
+  - iproute2
+  - iptables
+  - iputils-ping
+  - netcat-openbsd
+  - bind9-dnsutils
+  - mtr-tiny
+  - tcpdump
+  - ethtool
+  - lshw
+  - dmidecode
+  - dbus
+
+# ── Installed only with -e install_workstation_extras=true ────────────────
+# prod doubles as a development workstation, and these are the packages that
+# makes it one. A host that only runs client stacks does not need a browser,
+# a Go toolchain or a JS runtime — they are a large attack surface and a
+# large disk footprint for nothing. Kept so the reference host stays
+# reproducible, opt-in so a fleet host does not inherit a desktop.
+host_workstation_packages:
+  - google-chrome-stable   # needs its own apt repo — see setup-host.yml
+  - nodejs
+  - npm
+  - node-playwright
+  - golang-go
+  - gh
+  - inetutils-telnet
+  - trace-cmd
+  - numactl
+  - hdparm
+
+# Snaps on prod that belong with the workstation set. The remaining snaps
+# there (bare, core22, core24, gnome-46-2404, gtk-common-themes, mesa-2404,
+# snapd) are bases and platform snaps pulled in automatically by these, and
+# canonical-livepatch comes with Ubuntu Pro — none are listed for that reason.
+host_workstation_snaps:
+  - { name: chromium, classic: false }
+  - { name: firefox, classic: false }
+  - { name: cups, classic: false }
+  - { name: golangci-lint, classic: true }
+
+# ── Reference only — never installed by this playbook ─────────────────────
+# The rest of prod's manual set. These come from the Ubuntu cloud image, the
+# installer, or the hosting provider, and re-installing them on a host that
+# has already booted is at best a no-op and at worst destructive: grub-*,
+# shim-signed and linux-image-virtual rewrite boot configuration, cloud-init
+# and netplan.io own first-boot networking, and hc-utils/hwctl only exist in
+# the provider's own archive (prod's apt mirror is mirror.hetzner.com — a
+# host elsewhere cannot resolve them at all).
+#
+# If a new host is missing something here that turns out to matter, add it to
+# host_baseline_packages with a comment saying why, rather than installing
+# this list.
+host_base_image_packages:
+  - acpid
+  - adduser
+  - apport
+  - apt
+  - bash
+  - bcache-tools
+  - bsdutils
+  - btrfs-progs
+  - busybox-static
+  - cloud-guest-utils
+  - cloud-init
+  - cloud-initramfs-copymods
+  - command-not-found
+  - console-setup
+  - cpio
+  - cryptsetup
+  - cryptsetup-initramfs
+  - dash
+  - debconf
+  - debconf-i18n
+  - dhcpcd-base
+  - diffutils
+  - dirmngr
+  - dosfstools
+  - eatmydata
+  - ed
+  - efibootmgr
+  - fdisk
+  - findutils
+  - fonts-ubuntu-console
+  - friendly-recovery
+  - gdisk
+  - gnupg2
+  - grep
+  - grub-efi-amd64
+  - grub-efi-amd64-bin
+  - grub-efi-amd64-signed
+  - grub-pc-bin
+  - gzip
+  - hc-utils            # Hetzner Cloud guest utilities — provider archive only
+  - hostname
+  - hwctl               # Hetzner hardware control — provider archive only
+  - info
+  - init
+  - iputils-tracepath
+  - kbd
+  - kmod
+  - landscape-common
+  - linux-image-virtual
+  - login
+  - lsb-release
+  - lxd-agent-loader
+  - lxd-installer
+  - manpages
+  - mawk
+  - mdadm
+  - media-types
+  - motd-news-config
+  - mount
+  - multipath-tools
+  - ncurses-base
+  - ncurses-bin
+  - netbase
+  - netplan.io
+  - open-iscsi
+  - open-vm-tools
+  - overlayroot
+  - parted
+  - passwd
+  - patch
+  - pciutils
+  - plymouth
+  - plymouth-theme-ubuntu-text
+  - pollinate
+  - procps
+  - qemu-guest-agent
+  - sensible-utils
+  - shim-signed
+  - snapd
+  - sos
+  - ssh-import-id
+  - sudo-rs
+  - systemd
+  - systemd-resolved
+  - systemd-sysv
+  - time
+  - tzdata
+  - ubuntu-drivers-common
+  - ubuntu-keyring
+  - ubuntu-pro-client
+  - ubuntu-release-upgrader-core
+  - udev
+  - unminimize
+  - update-manager-core
+  - update-notifier-common
+  - usbutils
+  - util-linux
+  - vim-tiny
+  - whiptail

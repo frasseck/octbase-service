@@ -1,0 +1,28 @@
+# Ansible managed — octbase-service / setup-host.yml
+# Base edge Caddyfile for an Octbase fleet host.
+#
+# Written ONCE, on a host that has no Caddyfile of its own (force: false). An
+# existing Caddyfile — like prod's, which also carries the marketing site's
+# vhosts — is never overwritten; setup-host.yml only ensures the import line
+# below is present in it.
+#
+# Per-client vhosts are NOT written here. create-instance.yml drops one
+# snippet per client into {{ edge_snippet_dir }} and the import picks them up,
+# so onboarding a client never edits this file.
+
+{
+	# Where Let's Encrypt sends expiry warnings and problem reports for every
+	# certificate this host manages.
+	{% if acme_email | length > 0 %}email {{ acme_email }}{% else %}# email <ops@example.com>  — set acme_email in group_vars to enable{% endif %}
+
+}
+
+# Catch-all for requests that arrive by IP or by a hostname no client owns.
+# A fleet host's bare address should serve nothing: without this block Caddy
+# would answer such requests from whichever site block happens to be first,
+# quietly exposing one tenant at the wrong name.
+:80 {
+	respond "Not found" 404
+}
+
+import {{ edge_snippet_dir }}/*.caddy

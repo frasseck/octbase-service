@@ -1,0 +1,495 @@
+---
+# Provision a fresh server into an Octbase fleet host.
+#
+#   ansible-playbook playbooks/setup-host.yml -e target_host=prod2
+#   ansible-playbook playbooks/setup-host.yml -e target_host=prod2 --check --diff
+#
+# This is the step inventory/hosts.yml used to describe in prose ("adding a
+# server = ... set up its root edge Caddy with the import line ...") and
+# nothing in this repo performed: it turns a stock Ubuntu server into a host
+# that create-instance.yml can place a client on. Everything it configures was
+# taken from the running production host on 2026-08-05 — see
+# vars/host-packages.yml for the package capture.
+#
+# What it does NOT do, on purpose:
+#   - install monitoring or backups — those are install-monitoring.yml and
+#     install-backup.yml, which already target all hosts; run them after this
+#   - create any client — that is create-instance.yml, driven by the ledger
+#   - touch DNS, or attach Ubuntu Pro
+#
+# Idempotent: safe to re-run against an already-provisioned host, including
+# prod, to bring a hand-configured host up to the current baseline.
+#
+# ⚠ It hardens SSH and enables the firewall. Read the "SSH" section below
+# before pointing it at a host you are connected to.
+
+# ── Guard ────────────────────────────────────────────────────────────────
+# Every other playbook here is scoped by a client's ledger entry; this one is
+# not, so an unscoped `hosts: octbase_hosts` would re-provision — and restart
+# the SSH socket of — every host in the fleet at once. Naming the target is
+# therefore mandatory rather than defaulted.
+- name: Check the target host was named
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: A target host is required
+      ansible.builtin.assert:
+        that:
+          - target_host is defined
+          - target_host in groups['octbase_hosts']
+        fail_msg: >-
+          Name the host to provision with -e target_host=<name>, where <name>
+          is an entry in inventory/hosts.yml
+          (currently: {{ groups['octbase_hosts'] | default([]) | join(', ') }}).
+          Add the server there first if it is not listed yet.
+        quiet: true
+
+- name: Set up an Octbase fleet host
+  hosts: "{{ target_host }}"
+  become: true
+
+  vars_files:
+    - vars/host-packages.yml
+
+  vars:
+    # Everything below matches the production host. Override per run with -e.
+    host_timezone: Europe/Zurich
+    host_locale: en_US.UTF-8
+
+    # ── SSH ──
+    # Moving the port also moves the listening socket (see the note on the
+    # restart task). The connection Ansible is CURRENTLY using survives, so a
+    # run does not lock itself out — but every LATER connection must use the
+    # new port. If it is not already in your ~/.ssh/config, add it to the
+    # host's inventory entry as ansible_port before the next run.
+    ssh_port: 1012
+    # Accounts allowed to log in over SSH. Must include the account you run
+    # Ansible as — asserted below rather than discovered too late.
+    ssh_allow_users:
+      - lfrasseck
+      - claude
+    ssh_max_auth_tries: 5
+    ssh_client_alive_interval: 3600
+
+    # ── fail2ban ──
+    # prod bans for 120s, which costs a scanner nothing. 1h with a 10m window
+    # is the usual server default and is what a new host gets.
+    fail2ban_maxretry: 3
+    fail2ban_findtime: 10m
+    fail2ban_bantime: 1h
+    # Addresses that must never be banned (office IP, jump host, monitoring).
+    # localhost is implicit in fail2ban and does not need listing.
+    fail2ban_ignoreip: []
+
+    # ── Edge ──
+    # Contact address Let's Encrypt uses for expiry and problem notices on
+    # every certificate this host issues. Empty leaves it unset, which Caddy
+    # accepts — you then get no warning before an unrenewed cert expires.
+    acme_email: ""
+
+    # ── Optional extras ──
+    # Reproduce prod's workstation/dev tooling (browser, Go, Node, gh …).
+    # A host that only runs client stacks does not need it — see
+    # vars/host-packages.yml.
+    install_workstation_extras: false
+    # Configure per-account disk quotas in fstab. Enforcement needs a reboot
+    # (see the quota section); the flag exists so provisioning a host on a
+    # filesystem that cannot do quotas is a decision, not a silent skip.
+    configure_disk_quota: true
+
+  pre_tasks:
+    - name: Only Ubuntu is supported
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_version'] is version('24.04', '>=')
+        fail_msg: >-
+          This playbook targets Ubuntu 24.04 or newer (prod runs 26.04); this
+          host reports {{ ansible_facts['distribution'] }}
+          {{ ansible_facts['distribution_version'] }}. Two things below are
+          version-specific — socket-activated SSH and the rootless-podman
+          package set — so an older or different distribution needs the
+          playbook read through, not just re-run.
+
+    # An AllowUsers list without the connecting account locks the fleet out of
+    # its own host at the next connection — and the run that did it looks
+    # entirely successful, because the current connection survives.
+    - name: The SSH allow-list must contain the account running this playbook
+      ansible.builtin.assert:
+        that: ansible_facts['user_id'] in ssh_allow_users
+        fail_msg: >-
+          ssh_allow_users is {{ ssh_allow_users | join(', ') }}, which does not
+          include '{{ ansible_facts['user_id'] }}' — the account this run is
+          connected as. Applying it would leave you unable to reconnect. Add
+          the account (-e '{"ssh_allow_users": [...]}') and re-run.
+
+  tasks:
+    # ── Packages ─────────────────────────────────────────────────────────
+    - name: Refresh the apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install the fleet-host baseline
+      ansible.builtin.apt:
+        name: "{{ host_baseline_packages }}"
+        state: present
+
+    # Chrome is not in any Ubuntu archive; prod has Google's repo. Only laid
+    # down when the extras are actually wanted, so a server host gains neither
+    # the repo nor its signing key.
+    - name: Install the Google Chrome signing key
+      ansible.builtin.get_url:
+        url: https://dl.google.com/linux/linux_signing_key.pub
+        dest: /usr/share/keyrings/google-chrome.asc
+        mode: "0644"
+      when: install_workstation_extras | bool
+
+    - name: Add the Google Chrome repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.asc]
+          https://dl.google.com/linux/chrome-stable/deb/ stable main
+        filename: google-chrome
+        state: present
+        update_cache: true
+      when: install_workstation_extras | bool
+
+    # Per-package, tolerating failures: this list is a capture of one host, and
+    # a package that has been renamed or dropped from a later release should
+    # cost you a browser, not the whole provisioning run.
+    - name: Install the workstation extras
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ host_workstation_packages }}"
+      register: extras
+      # ignore_errors, NOT failed_when: false — the latter rewrites `failed` to
+      # false on every result, which would leave the report below with nothing
+      # to find and turn a package that did not install into a silent skip.
+      ignore_errors: true
+      when: install_workstation_extras | bool
+
+    - name: Report workstation extras that could not be installed
+      ansible.builtin.debug:
+        msg: >-
+          Not installed: {{ extras.results | selectattr('failed', 'defined')
+          | selectattr('failed') | map(attribute='item') | join(', ') }} —
+          check whether the package was renamed in this Ubuntu release, then
+          update vars/host-packages.yml.
+      when:
+        - install_workstation_extras | bool
+        - extras.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list | length > 0
+
+    # `snap install` on an already-installed snap exits non-zero with "already
+    # installed" — matched here rather than ignoring the return code wholesale,
+    # so a real failure (no such snap, no store access) still reports.
+    - name: Install the workstation snaps
+      ansible.builtin.command: >-
+        snap install {{ item.name }}{{ ' --classic' if item.classic else '' }}
+      register: snap_install
+      changed_when: snap_install.rc == 0
+      failed_when:
+        - snap_install.rc != 0
+        - "'already installed' not in snap_install.stderr"
+      loop: "{{ host_workstation_snaps }}"
+      when: install_workstation_extras | bool
+
+    # ── Time and locale ──────────────────────────────────────────────────
+    # Not cosmetic: every timestamp an operator reads during an incident —
+    # journal, backup log, monitor state file, Caddy access log — is in the
+    # host's local time, and a fleet whose hosts disagree makes correlating
+    # them across hosts a conversion exercise.
+    - name: Read the current timezone
+      ansible.builtin.command: timedatectl show --property=Timezone --value
+      register: current_tz
+      changed_when: false
+
+    - name: Set the timezone
+      ansible.builtin.command: "timedatectl set-timezone {{ host_timezone }}"
+      when: current_tz.stdout | trim != host_timezone
+
+    - name: Keep the clock synchronised
+      ansible.builtin.systemd_service:
+        name: chrony
+        enabled: true
+        state: started
+
+    - name: List the generated locales
+      ansible.builtin.command: locale -a
+      register: locales_present
+      changed_when: false
+
+    # `locale -a` reports the normalised name (en_US.utf8) for what is
+    # configured as en_US.UTF-8, and generated locales live in the shared
+    # locale-archive rather than under a predictable path — so the comparison
+    # is on normalised names, not on a file existing.
+    - name: Generate the locale
+      ansible.builtin.command: "locale-gen {{ host_locale }}"
+      when: >-
+        host_locale | lower | replace('-', '')
+        not in (locales_present.stdout_lines | map('lower') | map('replace', '-', '') | list)
+
+    - name: Set the default locale
+      ansible.builtin.copy:
+        dest: /etc/default/locale
+        mode: "0644"
+        content: |
+          # Managed by octbase-service / setup-host.yml
+          LANG={{ host_locale }}
+
+    # ── SSH ──────────────────────────────────────────────────────────────
+    - name: Harden sshd
+      ansible.builtin.template:
+        src: sshd-octbase.conf.j2
+        dest: /etc/ssh/sshd_config.d/10-octbase.conf
+        mode: "0600"
+        # Refuses to write a config sshd itself rejects. Without this a typo
+        # here takes the SSH daemon down on the next restart — on a remote
+        # host, unrecoverably.
+        validate: /usr/sbin/sshd -t -f %s
+      register: sshd_conf
+
+    # ssh on Ubuntu 24.04+ is socket-activated: ssh.service is `disabled` and
+    # ssh.socket owns the listening port, which sshd-socket-generator derives
+    # from sshd_config's Port at generator time. So a `reload ssh` after a port
+    # change reports success and changes nothing — the daemon re-reads its
+    # config while the socket keeps listening where it always did. The
+    # daemon-reload is what re-runs the generator; the socket restart is what
+    # picks up the result.
+    - name: Re-generate and restart the SSH socket
+      when: sshd_conf.changed
+      block:
+        - name: Re-run the systemd generators
+          ansible.builtin.systemd_service:
+            daemon_reload: true
+
+        - name: Restart the SSH socket
+          ansible.builtin.systemd_service:
+            name: ssh.socket
+            state: restarted
+            enabled: true
+
+    # ── Firewall ─────────────────────────────────────────────────────────
+    # Rules first, enable last. `ufw enable` on a host with no allow rule for
+    # the SSH port drops the next connection, and on a remote host that is
+    # the end of the session.
+    - name: Read the current firewall state
+      ansible.builtin.command: ufw status verbose
+      register: ufw_state
+      changed_when: false
+
+    - name: Allow the fleet host's inbound ports
+      ansible.builtin.command: "ufw allow {{ item }}"
+      loop:
+        - "{{ ssh_port }}/tcp"
+        - 80/tcp
+        - 443/tcp
+        # HTTP/3. Caddy serves it by default and advertises it via Alt-Svc,
+        # so without this clients spend a round trip failing over to TCP.
+        - 443/udp
+      register: ufw_rule
+      changed_when: "'Skipping' not in ufw_rule.stdout"
+
+    - name: Deny everything else inbound
+      ansible.builtin.command: "ufw --force default {{ item }}"
+      loop:
+        - deny incoming
+        - allow outgoing
+      when: "'deny (incoming), allow (outgoing)' not in ufw_state.stdout"
+
+    - name: Enable the firewall
+      ansible.builtin.command: ufw --force enable
+      when: "'Status: active' not in ufw_state.stdout"
+
+    # ── fail2ban ─────────────────────────────────────────────────────────
+    # jail.d/99-octbase.local, not jail.local — fail2ban reads
+    # jail.conf → jail.d/*.conf → jail.local → jail.d/*.local (man 5
+    # jail.conf), so only a .local inside jail.d/ takes precedence over a
+    # distribution snippet in the same directory. prod has exactly such a
+    # snippet (jail.d/sshd.conf, pinning `port = ssh`); written as jail.local
+    # this file would be read BEFORE it and lose.
+    - name: Configure the SSH jail
+      ansible.builtin.template:
+        src: fail2ban-octbase.local.j2
+        dest: /etc/fail2ban/jail.d/99-octbase.local
+        mode: "0644"
+      register: jail_conf
+
+    - name: Enable and start fail2ban
+      ansible.builtin.systemd_service:
+        name: fail2ban
+        enabled: true
+        state: "{{ 'restarted' if jail_conf.changed else 'started' }}"
+
+    # ── Unattended security upgrades ─────────────────────────────────────
+    - name: Apply security updates automatically
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        mode: "0644"
+        content: |
+          // Managed by octbase-service / setup-host.yml
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+
+    # ── Rootless podman ──────────────────────────────────────────────────
+    # The packages are in the baseline; these are the two files that must
+    # exist before `useradd` can hand a client account its subordinate id
+    # range. Without them the account is created without one, and its podman
+    # fails at first run with an id-mapping error that reads like a container
+    # problem.
+    - name: Ensure the subordinate id maps exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: touch
+        mode: "0644"
+        # touch is otherwise "changed" on every single run.
+        modification_time: preserve
+        access_time: preserve
+      loop:
+        - /etc/subuid
+        - /etc/subgid
+
+    # ── Per-account disk quota ───────────────────────────────────────────
+    # create-instance.yml calls setquota for every client and tolerates
+    # failure, warning that usage is monitored but not enforced. On prod that
+    # warning fires every run: / is mounted with plain `defaults`, so no
+    # client quota has ever been enforced there. Configuring it at host setup
+    # is the only point where the reboot it needs is free.
+    # /home where it is its own filesystem, / otherwise — reverse-sorting two
+    # candidate mount points puts '/home' ahead of '/'.
+    - name: Locate the filesystem backing the client home directories
+      ansible.builtin.set_fact:
+        home_fs: "{{ ansible_facts['mounts'] | selectattr('mount', 'in', ['/home', '/']) | sort(attribute='mount', reverse=true) | first }}"
+      when: configure_disk_quota | bool
+
+    # This is the one task in the play that edits a file the host needs in
+    # order to boot. The copy costs nothing and turns a bad fstab from a
+    # rescue-console job into a one-line restore.
+    - name: Back up fstab before editing it
+      ansible.builtin.copy:
+        src: /etc/fstab
+        dest: /etc/fstab.before-octbase-setup
+        remote_src: true
+        mode: "0644"
+        force: false
+      when:
+        - configure_disk_quota | bool
+        - "'usrquota' not in home_fs.options"
+
+    - name: Enable user quotas on that filesystem
+      ansible.posix.mount:
+        path: "{{ home_fs.mount }}"
+        # UUID=, not the fact's resolved device name: this module rewrites the
+        # whole fstab line, and writing /dev/sda1 where the installer had put a
+        # stable identifier would make the entry depend on enumeration order.
+        src: "UUID={{ home_fs.uuid }}"
+        fstype: "{{ home_fs.fstype }}"
+        opts: "{{ (home_fs.options.split(',') | reject('equalto', 'usrquota') | list + ['usrquota']) | join(',') }}"
+        # fstab only. Remounting a live root filesystem into quota mode
+        # without a quotacheck gives you accounting that starts from zero and
+        # under-reports every existing account — the quota package's boot-time
+        # quotacheck is what makes the numbers true, so a reboot is the
+        # supported path and the notice at the end of this play says so.
+        state: present
+      register: quota_fstab
+      when:
+        - configure_disk_quota | bool
+        - "'usrquota' not in home_fs.options"
+
+    - name: Turn quotas on if the filesystem is already mounted for them
+      ansible.builtin.command: "quotaon -u {{ home_fs.mount }}"
+      register: quotaon
+      changed_when: quotaon.rc == 0
+      failed_when: false
+      when:
+        - configure_disk_quota | bool
+        - "'usrquota' in home_fs.options"
+
+    # ── Octbase host registries and edge ─────────────────────────────────
+    - name: Create the platform directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /usr/local/lib/octbase, mode: "0755" }        # monitor + backup scripts
+        - { path: /etc/octbase, mode: "0755" }                  # host-level platform config
+        - { path: "{{ clients_registry_dir }}", mode: "0755" }  # one .conf per client, read by the monitor
+        - { path: "{{ edge_snippet_dir }}", mode: "0755" }      # one .caddy vhost per client
+        - { path: /var/lib/octbase-monitor, mode: "0755" }      # monitor state file
+        # 0700 from the moment it exists, and before the parent below: these
+        # hold every client's database dumps and their .env archives, so a
+        # world-readable window here is a window on the whole fleet's secrets.
+        - { path: "{{ backup_dir }}", mode: "0700" }
+        - { path: "{{ fleet_backup_root }}", mode: "0700" }
+
+    - name: Create the Caddy log directory
+      ansible.builtin.file:
+        path: /var/log/caddy
+        state: directory
+        owner: caddy
+        group: caddy
+        mode: "0750"
+
+    - name: Write the base edge Caddyfile
+      ansible.builtin.template:
+        src: edge-Caddyfile.j2
+        dest: "{{ edge_caddyfile }}"
+        mode: "0644"
+        # Never overwrite a host's existing edge config — prod's also carries
+        # the marketing site. The import line is ensured separately below, so
+        # an existing Caddyfile still gains client routing.
+        force: false
+      register: edge_caddyfile_written
+
+    # Same regexp as migrate-instance.yml, deliberately: both must recognise
+    # an import line the other wrote.
+    - name: Ensure the edge Caddyfile imports the per-client snippets
+      ansible.builtin.lineinfile:
+        path: "{{ edge_caddyfile }}"
+        regexp: "^import {{ edge_snippet_dir | regex_escape }}/"
+        line: "import {{ edge_snippet_dir }}/*.caddy"
+      register: edge_import
+
+    - name: Validate the edge configuration
+      ansible.builtin.command: "caddy validate --config {{ edge_caddyfile }} --adapter caddyfile"
+      register: caddy_valid
+      changed_when: false
+      when: edge_caddyfile_written.changed or edge_import.changed
+
+    - name: Enable and reload Caddy
+      ansible.builtin.systemd_service:
+        name: caddy
+        enabled: true
+        state: "{{ 'reloaded' if (edge_caddyfile_written.changed or edge_import.changed) else 'started' }}"
+
+    # ── What is left for the operator ────────────────────────────────────
+    - name: Next steps
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            ['Host ' ~ inventory_hostname ~ ' is provisioned.']
+            + (['',
+                '⚠ SSH now listens on port ' ~ ssh_port ~ '. This session survives, but the',
+                '  NEXT connection must use it — set ansible_port: ' ~ ssh_port ~ ' on this',
+                '  host in inventory/hosts.yml, or add it to your ~/.ssh/config.']
+               if sshd_conf.changed else [])
+            + (['',
+                '⚠ Disk quotas are configured in fstab but NOT yet active: the filesystem',
+                '  is mounted without usrquota. REBOOT to activate — until then',
+                '  create-instance.yml will warn that usage is monitored, not enforced.']
+               if (quota_fstab.changed | default(false)) else [])
+            + ['',
+               'Then, to finish joining the fleet:',
+               '  1) ansible-playbook playbooks/install-monitoring.yml',
+               '  2) ansible-playbook playbooks/install-backup.yml',
+               '  3) DNS (manual): point each client FQDN at this host.',
+               '  4) Place clients here via host: ' ~ inventory_hostname ~ ' in their',
+               '     ledger entry, then ansible-playbook playbooks/create-instance.yml -e client=<name>',
+               '',
+               'Not done by this playbook: Ubuntu Pro attachment (prod uses ESM for its',
+               'Caddy build), and off-host backup sync (backup_offhost_cmd in group_vars).']
+          }}

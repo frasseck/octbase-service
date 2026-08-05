@@ -52,6 +52,8 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `ledger/ledger.py` | Ledger CLI: `new`, `list`, `validate`, `next-ports` |
 | `scripts/check-version-drift.py` | Read-only: every version stamp vs the app repo's tags + changelog (C4/C13) |
 | `inventory/hosts.yml` | The production host(s) Ansible connects to |
+| `playbooks/setup-host.yml` | Provision a **new fleet host** from a stock Ubuntu server (packages, SSH, firewall, edge Caddy) |
+| `playbooks/vars/host-packages.yml` | The reference host's package capture: baseline / workstation extras / base image |
 | `inventory/group_vars/all/main.yml` | Platform-wide defaults (domain, SMTP relay, source path, …) |
 | `inventory/group_vars/all/vault.yml` | Ansible Vault: the SMTP relay password (`vault.yml.sample` documents it) |
 | `playbooks/create-instance.yml` | Create **or update** a client instance from its ledger entry |
@@ -421,6 +423,46 @@ Resume: set `status: active`, commit, `create-instance.yml` (restarts the
 stack, re-registers monitoring, rewrites the real vhost), reload the edge.
 Note: suspended instances are not in the monitor/backup registry — take a
 manual backup first if the suspension may end in offboarding.
+
+### Add a host to the fleet
+
+A stock Ubuntu 24.04+ server becomes a fleet host in two steps:
+
+```bash
+# 1) add the server to inventory/hosts.yml (name + ansible_host), then:
+ansible-playbook playbooks/setup-host.yml -e target_host=prod2
+ansible-playbook playbooks/install-monitoring.yml
+ansible-playbook playbooks/install-backup.yml
+```
+
+`setup-host.yml` installs the baseline package set (rootless podman and its
+prerequisites, Caddy, fail2ban, quota tooling, diagnosis tools — see
+`playbooks/vars/host-packages.yml`), sets timezone and locale, hardens sshd,
+enables the firewall, configures per-account disk quotas in `fstab`, creates
+`/etc/octbase/{edge,clients.d}` and lays down the edge Caddyfile with the
+`import /etc/octbase/edge/*.caddy` line client vhosts rely on. It is
+idempotent, so it also serves as "bring a hand-built host up to the current
+baseline" — including `prod`.
+
+Naming the target is mandatory (`-e target_host=`): the play restarts SSH and
+enables the firewall, and an unscoped run would do that to every host at once.
+
+Two things to know before the first run:
+
+- **SSH moves to port 1012.** The run's own connection survives, but the next
+  one needs the new port — add `ansible_port: 1012` to the host's inventory
+  entry (or your `~/.ssh/config`). `ssh_allow_users` must contain the account
+  you connect as; the play asserts this rather than locking you out.
+- **Disk quotas need one reboot.** The playbook writes `usrquota` into
+  `fstab`; the quota package's boot-time `quotacheck` is what makes the
+  numbers true, so enforcement starts after a restart. Until then
+  `create-instance.yml` warns that usage is monitored but not enforced —
+  which is the state `prod` is in today.
+
+Then place clients on it via `host: prod2` in their ledger entries.
+
+Not covered, deliberately: DNS, Ubuntu Pro attachment, and the off-host
+backup sync (`backup_offhost_cmd`).
 
 ### Move an instance to another host
 
