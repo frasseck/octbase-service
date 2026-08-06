@@ -70,7 +70,7 @@ octbase_version: "1.0.1"
 # exists to work around.
 #
 # This is the same All-Inkl relay the marketing site's contact-form mailer uses
-# (~/credentials/.env.ocete, WEB_SMTP_*), which the readiness plan nominates for
+# (~/credentials/.env.octbase-web, WEB_SMTP_*), which the readiness plan nominates for
 # exactly this. Verified 2026-08-04 from the production host: STARTTLS offered,
 # AUTH accepted, and MAIL FROM <noreply@beyags.com> accepted — the relay does
 # not require the envelope sender to equal the authenticated mailbox, so

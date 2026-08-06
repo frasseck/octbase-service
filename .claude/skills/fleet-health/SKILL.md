@@ -1,6 +1,6 @@
 ---
 name: fleet-health
-description: Check the live state of the ocete.ch platform host — fleet monitoring, nightly backups, resident stacks, client instances. Use when asked whether backups/monitoring/clients are healthy, to investigate a monitoring alert, or before/after a rollout as a health gate.
+description: Check the live state of the octbase.io platform host — fleet monitoring, nightly backups, resident stacks, client instances. Use when asked whether backups/monitoring/clients are healthy, to investigate a monitoring alert, or before/after a rollout as a health gate.
 ---
 
 # Fleet health — live host state
@@ -63,10 +63,10 @@ podman ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'   # resident stacks 
 
 | Stack | Where to diagnose |
 |---|---|
-| A client instance | `sudo machinectl shell oct-<name>@` (or ssh) → then the app repo's probe: `~octbase/octbase-operations/check-health.sh`; public edge: `curl -s https://<name>.ocete.ch/health` |
+| A client instance | `sudo machinectl shell oct-<name>@` (or ssh) → then the app repo's probe: `~octbase/octbase-operations/check-health.sh`; public edge: `curl -s https://<name>.octbase.io/health` |
 | Demo | A client instance since 2026-07-11 — diagnose it as one (account `oct-demo`), not as a resident stack. There is no `~/demo.ocete.ch` checkout |
-| Dev (`octbase_dev` project) | `~/dev.ocete.ch` checkout → its `stack-health` skill |
-| Marketing site | `~/ocete.ch` checkout → its `run-site` skill |
+| Dev (`octbase_dev` project) | `~/dev.octbase.io` checkout → its `stack-health` skill |
+| Marketing site | `~/octbase.io` checkout → its `run-site` skill |
 
 The reaction runbook (which layer failed, what to do) is the app repo's
 `octbase-operations/README.md`; don't duplicate it here.
@@ -77,7 +77,7 @@ After `create-instance.yml` runs for a client (the playbook already waits on
 `/health`), confirm from here:
 
 ```bash
-curl -s https://<name>.ocete.ch/health        # through the public edge
+curl -s https://<name>.octbase.io/health        # through the public edge
 sudo /usr/local/lib/octbase/monitor-all.sh --print   # once monitoring is installed
 ```
 

@@ -10,7 +10,7 @@
 # not yet working. Creating it is the last step, and it cannot be done from the
 # production host — ansible-vault is not installed there, deliberately.
 #
-# The password to paste is WEB_SMTP_PASSWORD from ~/credentials/.env.ocete on
+# The password to paste is WEB_SMTP_PASSWORD from ~/credentials/.env.octbase-web on
 # the production host (0600, owner claude). Copy it over a secure channel; do
 # not commit it anywhere in plain text, and do not paste it into a chat.
 #

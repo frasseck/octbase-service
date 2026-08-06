@@ -33,7 +33,7 @@ playbook per active client" regardless of where each client lives.
   `default_client_host` (group_vars).
 - **Ports** — allocated globally unique across the whole fleet (not just per
   host) so an instance can move between hosts without renumbering.
-- **DNS** — `<name>.ocete.ch` must point at the instance's host; DNS stays a
+- **DNS** — `<name>.octbase.io` must point at the instance's host; DNS stays a
   manual step and is called out by every playbook that changes placement.
 - **Host services** (edge Caddy import line, monitoring, fleet backup) are
   installed once per host: `install-monitoring.yml` and `install-backup.yml`

@@ -1,8 +1,8 @@
 # Octbase — Security & Data-Protection Concept
 
-**Scope:** the ocete.ch platform — the marketing site (`ocete.ch`), the public
-demo (`demo.ocete.ch`), the development stack (`dev.ocete.ch`) and the
-per-client production instances (`<name>.ocete.ch`) provisioned by this repo.
+**Scope:** the octbase.io platform — the marketing site (`octbase.io`), the public
+demo (`demo.octbase.io`), the development stack (`dev.octbase.io`) and the
+per-client production instances (`<name>.octbase.io`) provisioned by this repo.
 **Owner:** platform operator (Lars Frasseck / beyags).
 **Last reviewed:** 2026-07-10. **Review cadence:** at least annually and after
 any material architecture change (see §10).
@@ -158,7 +158,7 @@ Tracked here until closed; required by RiLi ch. 6/16/17 and the Merkblatt §3.
 - [ ] **Records of processing (VVT)** — GDPR Art. 30 / revDSG Art. 12.
 - [ ] **TOMs documentation** and the periodic **penetration test / vulnerability
       scan** — RiLi 12/33, Merkblatt §4.
-- [ ] **Edge restriction of `dev.ocete.ch` / `demo.ocete.ch`** (IP filter or
+- [ ] **Edge restriction of `dev.octbase.io` / `demo.octbase.io`** (IP filter or
       basic-auth) — public demo instances carry known credentials by design.
 - [ ] **SBOM / dependency inventory** — RiLi 14/19.
 - [ ] **Incident-response plan** — RiLi 13/30.

@@ -4,20 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Operations toolkit for the **ocete.ch** hosting platform: one Octbase stack
+Operations toolkit for the **octbase.io** hosting platform: one Octbase stack
 per client, pinned to one of possibly several hosts (`host:` in the ledger),
 provisioned by Ansible from a git-versioned client ledger, with per-account
 resource caps + disk quotas, fleet monitoring (health + disk) and nightly
 per-client backups. The [README](README.md) is the full reference (layout,
 ledger fields, runbooks); `docs/fleet-concept.md` is the multi-instance /
 multi-host model; `docs/platform-overview.md` maps this repo against the
-other three (`dev.ocete.ch`, `demo.ocete.ch`, `ocete.ch`). One concern, one
+other two (`dev.octbase.io`, `octbase.io`). One concern, one
 owner — link to the authoritative doc rather than copying content between
 repos (see platform-overview §5).
 
 **Where this checkout runs:** on the production host itself, but the
 playbooks are designed to run **from a separate admin machine** over SSH
-(`inventory/hosts.yml` targets `ocete.ch` as an unprivileged sudo account —
+(`inventory/hosts.yml` targets `octbase.io` as an unprivileged sudo account —
 root login is refused; plays elevate with `become: true`) — and **Ansible is not
 installed on this host**. So from here you can edit playbooks/templates,
 manage the ledger, and inspect live host state (stacks, timers, backups),

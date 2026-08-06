@@ -19,8 +19,8 @@ platform.
 
 | Working copy (host) | Git repo | Branch policy | What it is |
 |---|---|---|---|
-| `~/dev.ocete.ch` | `frasseck/octbase-app` | `release_vN` feature/release branches | **The application monorepo, development checkout.** Go API + desktop frontend + mobile SPA + shared JS + operations probe. Also the default `octbase_src` the client playbooks rsync from. |
-| `~/ocete.ch` | `frasseck/ocete` | `main` | **The marketing/landing site** — static no-build site + Go contact-form mailer. No dependency on the app. Carries the public pricing, privacy policy, terms and imprint. |
+| `~/dev.octbase.io` | `frasseck/octbase-app` | `release_vN` feature/release branches | **The application monorepo, development checkout.** Go API + desktop frontend + mobile SPA + shared JS + operations probe. Also the default `octbase_src` the client playbooks rsync from. |
+| `~/octbase.io` | `frasseck/octbase-web` | `main` | **The marketing/landing site** — static no-build site + Go contact-form mailer. No dependency on the app. Carries the public pricing, privacy policy, terms and imprint. |
 | `~/octbase-service` | `frasseck/octbase-service` | `main` | **This repo** — client ledger, Ansible playbooks, fleet monitoring, host backup. Provisions one production stack per client. |
 
 There is exactly **one** app-repo checkout on the host. `~/demo.ocete.ch` used
@@ -36,22 +36,29 @@ Since 2026-07-11 only the **dev** stack still runs under the `claude`
 account: the public demo was migrated into its own `oct-demo` account as the
 first ledger-managed instance (`ledger/clients/demo.yml`, ports 8110–8112,
 via `migrate-instance.yml`), and the marketing site moved to the `oct-web`
-account on loopback port 8120 (`scripts/migrate-ocete-web.sh`; 8120 is
+account on loopback port 8120 (`scripts/migrate-octbase-web.sh`; 8120 is
 reserved in `ledger.py` so it is never allocated to a client).
 
 | Stack | Account | Compose project | systemd unit (user) | Host ports |
 |---|---|---|---|---|
-| Marketing `octbase.io` | `oct-web` | `ocete` | `ocete-web.service` | web 8120 (loopback) |
+| Marketing `octbase.io` | `oct-web` | `ocete` ¹ | `ocete-web.service` ¹ | web 8120 (loopback) |
 | Demo `demo.octbase.io` | `oct-demo` | `octbase` | `octbase.service` | frontend 8110 · api 8111 · postgres 8112 |
 | Dev `dev.octbase.io` | `claude` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
 | DB backup (legacy, dev only) | `claude` | — | `octbase-backup.timer` (daily 03:30) | — |
 | Client `<name>` | `oct-<name>` | `octbase` (per account) | per-user `octbase.service`, root `octbase-monitor.timer` + `octbase-fleet-backup.timer` (**not yet installed** — register D13) | frontend/api/postgres blocks from 8110, loopback-only |
 
+¹ The `oct-web` account still carries the **pre-rename** names — compose project
+`ocete`, unit `ocete-web.service`, directory `~oct-web/ocete.ch` and
+`.env.ocete`. The 2026-08-06 domain rename covered the `claude` account's
+staging copy (now `~/octbase.io`, project `octbase-web`) but not that account,
+which needs root. Do not "correct" this row until the rename has actually been
+carried out there; see the header of `scripts/migrate-octbase-web.sh`.
+
 Also on the host: `~/restart.sh` (stale since the migrations: it still
-rebuilds `~/ocete.ch` — no longer the public site — and `cd`s into the
+rebuilds `~/octbase.io` — no longer the public site — and `cd`s into the
 removed `~/demo.ocete.ch`; use `sync-instance.yml` for the demo instead),
 `~/credentials/` (the real `.env` files for dev and marketing —
-`~/dev.ocete.ch/.env` is a symlink into it), `~/backups/` (legacy nightly
+`~/dev.octbase.io/.env` is a symlink into it), `~/backups/` (legacy nightly
 dumps + `backup.log`; covers only what the `claude` account can see, i.e.
 dev — the demo is the fleet backup's job, register D13).
 
@@ -97,7 +104,7 @@ instances always run base + client override.
 
 ## 4. How a change reaches production
 
-1. **Develop** on a `release_vN` branch in `~/dev.ocete.ch`; the dev stack
+1. **Develop** on a `release_vN` branch in `~/dev.octbase.io`; the dev stack
    runs that working tree. CI (`.github/workflows/ci.yml`) gates lint, tests
    with a coverage floor, the frontend guards and a Playwright e2e run — and
    on every `main` push publishes per-commit images to GHCR
@@ -140,7 +147,7 @@ One concern, one owner — everything else should link, not copy:
 | Per-client provisioning & fleet runbooks | this repo [README](../README.md) |
 | Security & data-protection concept (platform-wide) | this repo [`docs/security-data-protection-concept.md`](security-data-protection-concept.md) |
 | Cross-repo contracts & drift | this repo [`docs/consistency-register.md`](consistency-register.md) |
-| Public pricing / legal texts | `ocete.ch` repo (`pricing.html`, `privacy.html`, `terms.html`, imprint) |
+| Public pricing / legal texts | `octbase.io` repo (`pricing.html`, `privacy.html`, `terms.html`, imprint) |
 
 ## 6. Naming
 
@@ -149,16 +156,22 @@ The **product** is *Octbase* (`frasseck/octbase-app`, `OCTBASE_*` env prefix,
 hosted platform** was *ocete.ch* and became **`octbase.io` on 2026-08-06**
 (subdomains per client, `base_domain` in group_vars).
 
-That rename covered **hostnames only**. Three things deliberately still carry
-the old name and must not be swept up in a find-and-replace:
+That rename was carried through everything addressable, in one pass:
+hostnames, the host directories (`~/dev.octbase.io`, `~/octbase.io`), the
+marketing repo (`frasseck/ocete` → `frasseck/octbase-web`), its compose
+project and `~/credentials/.env.octbase-web`, and the systemd unit
+descriptions. Product naming was already `octbase-*` and did not move.
 
-- **Directory names on the host** — `~/dev.ocete.ch`, `~/ocete.ch`. They are
-  paths, not addresses; nothing resolves them.
-- **The marketing-site repo** — `frasseck/ocete`, and the `ocete` compose
-  project and `.env.ocete` that follow from it.
-- **Dated records** — the consistency register and CHANGELOG entries describe
-  what was true when written.
+**What still says `ocete` is deliberate, and is not a missed replacement:**
 
-Directory names originally followed the domain and repo names followed the
-product; with the domain moved, that split no longer lines up. Don't "fix" one
-to match the other without deciding for the whole platform.
+- **Dated records** — `docs/consistency-register.md`, CHANGELOG entries and
+  ledger notes describe what was true on the date they were written. Rewriting
+  them would make the audit trail claim a domain that did not exist yet.
+- **`/home/claude/demo.ocete.ch`** — a checkout removed in July 2026. It never
+  existed under the new name, so renaming the references would fabricate a path.
+- **`~oct-web/`'s copies** — that account still holds `ocete.ch/`,
+  `.env.ocete` and `ocete-web.service` from the pre-rename migration. Renaming
+  them needs root; `scripts/migrate-octbase-web.sh` documents the cleanup.
+
+So a bare `grep -r ocete` is expected to return hits. Read the context before
+"fixing" one — each remaining hit is one of the three cases above.

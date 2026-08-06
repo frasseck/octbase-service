@@ -47,10 +47,10 @@ bookable on `business` (included in enterprise, never on team — there the
 scaffold defaults it to false); ports auto-allocated from 8110 in blocks of 10.
 
 Then two **manual** steps the playbook prints: DNS A/AAAA record for
-`acme.ocete.ch`, and including the generated edge snippet
+`acme.octbase.io`, and including the generated edge snippet
 (`/etc/octbase/edge/acme.caddy`) from the root-managed edge Caddyfile.
 While DNS/edge are pending, set `monitor_edge_probe: false` in the ledger
-file (remove it once live). Verify: `curl -s https://acme.ocete.ch/health`.
+file (remove it once live). Verify: `curl -s https://acme.octbase.io/health`.
 
 ## Reconfigure (edition, add-on, seats, version)
 
@@ -74,7 +74,7 @@ is deployed. Then, in this repo:
 1. Bump `octbase_version` in `inventory/group_vars/all/main.yml` (and/or
    `app_version` per ledger entry) — must match a dated entry in the app
    repo's `CHANGELOG.md` (contract C4).
-2. Verify the deploy source: `git -C ~/dev.ocete.ch status -sb` must show the
+2. Verify the deploy source: `git -C ~/dev.octbase.io status -sb` must show the
    released commit with a **clean tree** — the playbook rsyncs the working
    tree as-is, uncommitted changes included (contract C13).
 3. Admin machine: `create-instance.yml` per active client; the playbook gates
