@@ -15,7 +15,7 @@ ports:
   postgres: 8142
 notes: >-
   Offboarded 2026-08-04 on Lars's instruction. Never provisioned: no
-  oct-educaswiss account was ever created, educaswiss.ocete.ch never got DNS or
+  oct-educaswiss account was ever created, educaswiss.octbase.io never got DNS or
   an edge snippet, and no contact email was ever supplied — open since
   2026-07-27 while the entry still read status active. There was therefore
   nothing on the host to remove and remove-instance.yml was not run; this is a

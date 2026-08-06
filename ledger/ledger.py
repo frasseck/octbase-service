@@ -33,7 +33,7 @@ GROUP_VARS_FILE = (Path(__file__).resolve().parent.parent
 
 # Max 28 chars: the Linux account is "oct-<name>" and useradd caps
 # usernames at 32 characters. Must end in a letter or digit — the name is
-# also the subdomain label, and "acme-.ocete.ch" is not a valid DNS label.
+# also the subdomain label, and "acme-.octbase.io" is not a valid DNS label.
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,26}[a-z0-9]$")
 # "demo" is deliberately not reserved: the public demo is ledger-managed
 # since 2026-07-11 (clients/demo.yml, migrated via migrate-instance.yml).
@@ -58,13 +58,13 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # dev/demo ports (8025/8026 were their Mailpit UIs) — kept, since they cost
 # nothing and an old stack could still be revived on them.
 #
-# 8120 is the oct-web marketing site (scripts/migrate-ocete-web.sh); it sits
+# 8120 is the oct-web marketing site (scripts/migrate-octbase-web.sh); it sits
 # *inside* the client allocation range, which is why it has to be listed.
 # 8110-8112 and 8130-8132 are NOT here on purpose: demo and beyags are ledger
 # clients, so taken_ports() picks their blocks up from the ledger itself.
 RESERVED_PORTS = {
     5432, 5433, 8000, 8001, 8025, 8026, 8080, 8081, 8082, 8083,
-    8100, 8101, 8102,   # dev.ocete.ch (resident, not a ledger client)
+    8100, 8101, 8102,   # dev.octbase.io (resident, not a ledger client)
     8120,               # oct-web marketing site
 }
 PORT_BASE = 8110   # first client block; blocks advance in steps of 10

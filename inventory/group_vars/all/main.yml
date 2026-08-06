@@ -1,8 +1,20 @@
 # Platform-wide defaults for all Octbase client instances.
 # Per-client values live in ledger/clients/<name>.yml — not here.
 
-# Public base domain; a client "acme" is served at acme.ocete.ch.
-base_domain: ocete.ch
+# Public base domain; a client "acme" is served at acme.octbase.io.
+#
+# Changed from ocete.ch on 2026-08-06. Every per-client playbook builds
+# fqdn = "{{ client }}.{{ base_domain }}", which feeds the edge vhost
+# (caddy-vhost.j2), the instance env (env.j2 → OCTBASE_CORS_ORIGIN and
+# OCTBASE_APP_URL), the registry conf and the unit descriptions. So a run
+# against an existing client MOVES it to the new hostname; it is not a
+# cosmetic edit.
+#
+# Before rolling any client over, confirm <client>.octbase.io resolves to the
+# fleet host. octbase.io has a wildcard CNAME to the registrar, so a missing
+# A record does NOT fail loudly — it silently lands on registrar parking and
+# the edge's ACME challenge for that name cannot complete.
+base_domain: octbase.io
 
 # Inventory host a client runs on when its ledger entry has no `host:` field
 # (must be a name from inventory/hosts.yml). Per-client playbooks scope
@@ -58,7 +70,7 @@ octbase_version: "1.0.1"
 # exists to work around.
 #
 # This is the same All-Inkl relay the marketing site's contact-form mailer uses
-# (~/credentials/.env.ocete, WEB_SMTP_*), which the readiness plan nominates for
+# (~/credentials/.env.octbase-web, WEB_SMTP_*), which the readiness plan nominates for
 # exactly this. Verified 2026-08-04 from the production host: STARTTLS offered,
 # AUTH accepted, and MAIL FROM <noreply@beyags.com> accepted — the relay does
 # not require the envelope sender to equal the authenticated mailbox, so

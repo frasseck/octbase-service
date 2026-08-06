@@ -38,7 +38,7 @@ except ImportError:
 REPO = Path(__file__).resolve().parent.parent
 GROUP_VARS = REPO / "inventory" / "group_vars" / "all" / "main.yml"
 CLIENTS_DIR = REPO / "ledger" / "clients"
-DEFAULT_APP_REPO = Path.home() / "dev.ocete.ch"
+DEFAULT_APP_REPO = Path.home() / "dev.octbase.io"
 
 # Tags this platform deploys are plain "vX.Y.Z" — that is what create-instance
 # asserts on, so anything else (release candidates, v0 prototypes with suffixes)

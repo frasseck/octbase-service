@@ -17,8 +17,8 @@ validates and reloads Caddy.
 Two use cases, same playbook:
 - **Adopt a legacy stack** (runs in a shared account, no systemd unit,
   hardcoded edge vhost) into the client model — e.g. the public demo.
-- **Rename a managed client**: `oct-old`/`old.ocete.ch` →
-  `oct-new`/`new.ocete.ch` (new ledger entry under the new name; the old
+- **Rename a managed client**: `oct-old`/`old.octbase.io` →
+  `oct-new`/`new.octbase.io` (new ledger entry under the new name; the old
   snippet + monitor registration are dropped automatically).
 
 ## How it works (3 phases, one invocation)

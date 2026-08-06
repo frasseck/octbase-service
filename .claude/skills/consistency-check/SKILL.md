@@ -16,8 +16,8 @@ here (`~/demo.ocete.ch` was the second and is gone; the demo has been a
 ledger-managed client under `oct-demo` since 2026-07-11):
 
 ```bash
-export OCTBASE_SRC=~/dev.ocete.ch     # app repo — the only checkout on the host
-# ~/ocete.ch (marketing) · ~/octbase-service (this repo)
+export OCTBASE_SRC=~/dev.octbase.io     # app repo — the only checkout on the host
+# ~/octbase.io (marketing) · ~/octbase-service (this repo)
 ```
 
 ## Checklist (from register §3, with interpretation)
@@ -42,7 +42,7 @@ scripts/check-version-drift.py
 # client home, so ask the running API instead of the file.
 grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev
 for h in dev demo beyags; do
-  printf '%-8s %s\n' "$h" "$(curl -s https://$h.ocete.ch/api/v1/health)"
+  printf '%-8s %s\n' "$h" "$(curl -s https://$h.octbase.io/api/v1/health)"
 done   # version + migrationVersion; compare against ledger app_version
 
 # C8 — live host ports vs ledger.py RESERVED_PORTS
@@ -57,7 +57,7 @@ Manual (no grep suffices):
 
 - **C2 limits**: API code defaults (`$OCTBASE_SRC/octbase-api/cmd/octbase-api/main.go`:
   users 5, upload 10 MB, storage 512 MB) vs `env.j2` vs the pricing note on
-  `~/ocete.ch/pricing.html` (the marketing repo's `product-claims-check`
+  `~/octbase.io/pricing.html` (the marketing repo's `product-claims-check`
   skill covers the copy side).
 - **C3 editions**: `ledger.py` `EDITIONS` + add-on rule vs the API's
   `OCTBASE_EDITION`/`OCTBASE_OPTION_JIRA_IMPORT` gating vs the Business card

@@ -1,37 +1,56 @@
 #!/usr/bin/env bash
 #
-# migrate-ocete-web.sh
+# migrate-octbase-web.sh
 # ---------------------------------------------------------------------------
-# Move the public ocete.ch marketing site into its own dedicated Linux
+# Move the public octbase.io marketing site into its own dedicated Linux
 # account (oct-web) as a rootless-podman stack that starts on boot, and cut
 # the edge reverse proxy over to it.
 #
-#   * ocete.ch + www.ocete.ch          -> served by the NEW oct-web instance
+#   * octbase.io + www.octbase.io          -> served by the NEW oct-web instance
 #                                         (rootless podman, bound 127.0.0.1:8120)
-#   * dev.ocete.ch                     -> LEFT UNTOUCHED (stays public, no auth)
-#   * /home/claude/ocete.ch            -> KEPT as-is for further development
+#   * dev.octbase.io                     -> LEFT UNTOUCHED (stays public, no auth)
+#   * /home/claude/octbase.io            -> KEPT as-is for further development
 #
-# Both ocete.ch and dev.ocete.ch remain publicly reachable in a browser with
+# Both octbase.io and dev.octbase.io remain publicly reachable in a browser with
 # no password: this script never adds basic_auth and refuses to reload the
 # edge if validation fails.
 #
 # Run as root on the host that runs the app stacks AND the edge Caddy:
 #
-#     sudo bash migrate-ocete-web.sh          # interactive confirmation
-#     sudo bash migrate-ocete-web.sh --yes    # non-interactive
+#     sudo bash migrate-octbase-web.sh          # interactive confirmation
+#     sudo bash migrate-octbase-web.sh --yes    # non-interactive
 #
 # Idempotent: safe to re-run. It re-syncs the site, rebuilds, and converges
 # the edge config to the intended target.
+#
+# ---------------------------------------------------------------------------
+# BEFORE RE-RUNNING AFTER THE 2026-08-06 DOMAIN CHANGE — READ THIS
+# ---------------------------------------------------------------------------
+# This script last ran under the old ocete.ch naming, so the oct-web account
+# it created still carries the OLD names:
+#
+#     ~oct-web/ocete.ch          (this script now syncs to ~oct-web/octbase.io)
+#     ~oct-web/credentials/.env.ocete   (now .env.octbase-web)
+#     ocete-web.service                 (now octbase-web.service)
+#
+# A re-run does NOT clean those up. It would leave the old unit enabled
+# alongside the new one, with two units driving the same stack. Before
+# re-running: disable and remove ocete-web.service, then delete the stale
+# directory and env file, as the oct-web user.
+#
+# The edge step matches on the OLD_TARGET host:port, not on a hostname, so
+# it is a no-op against an edge that is already on 8120 — it warns rather
+# than reverting octbase.io to ocete.ch.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
 SRC_USER="claude"
-SRC_DIR="/home/${SRC_USER}/ocete.ch"        # existing marketing checkout
+SRC_DIR="/home/${SRC_USER}/octbase.io"        # existing marketing checkout
 
 WEB_USER="oct-web"                           # dedicated account (already exists)
 WEB_HOME="/home/${WEB_USER}"
-APP_DIR="${WEB_HOME}/ocete.ch"               # deploy target
+APP_DIR="${WEB_HOME}/octbase.io"               # deploy target
 CRED_DIR="${WEB_HOME}/credentials"
 
 WEB_PORT_NUM="8120"                          # host loopback port for the site
@@ -39,7 +58,7 @@ NEW_TARGET="127.0.0.1:${WEB_PORT_NUM}"       # what the edge will proxy to
 OLD_TARGET="178.105.142.1:8082"              # current hardcoded edge target
 
 EDGE_CADDY="/etc/caddy/Caddyfile"
-UNIT_NAME="ocete-web.service"
+UNIT_NAME="octbase-web.service"
 
 ASSUME_YES=0
 [[ "${1:-}" == "--yes" || "${1:-}" == "-y" ]] && ASSUME_YES=1
@@ -63,7 +82,7 @@ done
 
 getent passwd "$WEB_USER" >/dev/null || die \
     "account '$WEB_USER' does not exist. Create it first:
-       useradd -m -s /bin/sh -c 'ocete.ch marketing site' $WEB_USER
+       useradd -m -s /bin/sh -c 'octbase.io marketing site' $WEB_USER
      and add /etc/subuid + /etc/subgid entries for rootless podman."
 
 WEB_UID="$(id -u "$WEB_USER")"
@@ -89,8 +108,8 @@ cat <<EOF
   Deploy dir  : ${APP_DIR}
   Site port   : ${NEW_TARGET}  (loopback; edge is the only public entry)
   Edge config : ${EDGE_CADDY}
-  Edge change : ocete.ch + www.ocete.ch  ->  ${NEW_TARGET}
-                dev.ocete.ch             ->  UNCHANGED (stays public, no auth)
+  Edge change : octbase.io + www.octbase.io  ->  ${NEW_TARGET}
+                dev.octbase.io             ->  UNCHANGED (stays public, no auth)
 
 EOF
 if [[ $ASSUME_YES -ne 1 ]]; then
@@ -130,22 +149,22 @@ rsync -a --delete --exclude '.env' --exclude 'pgdata' --exclude 'attachments' \
 ok "site files synced"
 
 # ── 3. Per-account .env with its own loopback port ─────────────────────────
-log "Writing ${CRED_DIR}/.env.ocete (own copy of the SMTP secrets)"
+log "Writing ${CRED_DIR}/.env.octbase-web (own copy of the SMTP secrets)"
 mkdir -p "$CRED_DIR"
 umask 077
 # copy source env, forcing WEB_PORT to the loopback binding
-sed -E "s#^WEB_PORT=.*#WEB_PORT=${NEW_TARGET}#" "$SRC_ENV" > "$CRED_DIR/.env.ocete"
-grep -q '^WEB_PORT=' "$CRED_DIR/.env.ocete" || \
-    printf 'WEB_PORT=%s\n' "$NEW_TARGET" >> "$CRED_DIR/.env.ocete"
+sed -E "s#^WEB_PORT=.*#WEB_PORT=${NEW_TARGET}#" "$SRC_ENV" > "$CRED_DIR/.env.octbase-web"
+grep -q '^WEB_PORT=' "$CRED_DIR/.env.octbase-web" || \
+    printf 'WEB_PORT=%s\n' "$NEW_TARGET" >> "$CRED_DIR/.env.octbase-web"
 umask 022
-# link app/.env -> ../credentials/.env.ocete (same layout as the claude account)
-ln -sfn "../credentials/.env.ocete" "$APP_DIR/.env"
+# link app/.env -> ../credentials/.env.octbase-web (same layout as the claude account)
+ln -sfn "../credentials/.env.octbase-web" "$APP_DIR/.env"
 ok "env staged, WEB_PORT=${NEW_TARGET}"
 
 # ── 4. Ownership: everything under oct-web belongs to oct-web ───────────────
 log "Fixing ownership"
 chown -R "${WEB_USER}:${WEB_USER}" "$APP_DIR" "$CRED_DIR"
-chmod 600 "$CRED_DIR/.env.ocete"
+chmod 600 "$CRED_DIR/.env.octbase-web"
 ok "ownership set"
 
 # ── 5. Sanity-check rootless podman for this user ──────────────────────────
@@ -168,7 +187,7 @@ UNIT_DIR="${WEB_HOME}/.config/systemd/user"
 mkdir -p "$UNIT_DIR"
 cat > "${UNIT_DIR}/${UNIT_NAME}" <<EOF
 [Unit]
-Description=ocete.ch marketing site (oct-web, podman-compose)
+Description=octbase.io marketing site (oct-web, podman-compose)
 After=network-online.target
 Wants=network-online.target
 
@@ -204,20 +223,20 @@ else
 fi
 
 # ── 8. Cut the edge reverse proxy over to the oct-web instance ─────────────
-log "Repointing the edge proxy (ocete.ch + www.ocete.ch -> ${NEW_TARGET})"
+log "Repointing the edge proxy (octbase.io + www.octbase.io -> ${NEW_TARGET})"
 
 if grep -qF "$OLD_TARGET" "$EDGE_CADDY"; then
     BACKUP="${EDGE_CADDY}.bak.$(date +%Y%m%d-%H%M%S)"
     cp -a "$EDGE_CADDY" "$BACKUP"
     ok "backed up edge config to $BACKUP"
 
-    # Only the two marketing blocks use :8082; dev.ocete.ch uses :8081 and is
+    # Only the two marketing blocks use :8082; dev.octbase.io uses :8081 and is
     # not matched, so it is left exactly as-is. grep -F / escaped dots: the
     # target must match literally, not as a regex where "." is any character.
     n=$(grep -cF "$OLD_TARGET" "$EDGE_CADDY")
     sed -i "s#${OLD_TARGET//./\\.}#${NEW_TARGET}#g" "$EDGE_CADDY"
     log "  replaced ${n} occurrence(s) of ${OLD_TARGET}"
-    [[ "$n" -eq 2 ]] || warn "expected 2 replacements (ocete.ch + www.ocete.ch), got ${n} — review $EDGE_CADDY"
+    [[ "$n" -eq 2 ]] || warn "expected 2 replacements (octbase.io + www.octbase.io), got ${n} — review $EDGE_CADDY"
 
     if caddy validate --config "$EDGE_CADDY" >/dev/null 2>&1; then
         systemctl reload caddy
@@ -231,19 +250,19 @@ elif grep -qF "$NEW_TARGET" "$EDGE_CADDY"; then
     ok "edge already points at ${NEW_TARGET} — nothing to change"
 else
     warn "edge config no longer contains ${OLD_TARGET} nor ${NEW_TARGET}."
-    warn "It may have been edited by hand. Ensure ocete.ch/www.ocete.ch proxy to ${NEW_TARGET} and reload caddy yourself."
+    warn "It may have been edited by hand. Ensure octbase.io/www.octbase.io proxy to ${NEW_TARGET} and reload caddy yourself."
 fi
 
 # guardrail: no password/basic auth was introduced for the public domains
 if grep -Eiq 'basic_?auth' "$EDGE_CADDY"; then
-    warn "edge config contains a basic_auth directive — verify it does NOT cover ocete.ch or dev.ocete.ch (both must stay password-free)."
+    warn "edge config contains a basic_auth directive — verify it does NOT cover octbase.io or dev.octbase.io (both must stay password-free)."
 else
-    ok "no basic_auth in edge config (ocete.ch and dev.ocete.ch stay password-free)"
+    ok "no basic_auth in edge config (octbase.io and dev.octbase.io stay password-free)"
 fi
 
 # ── 9. Verify both domains through the edge ────────────────────────────────
 log "Verifying public reachability through the edge (localhost:80, Host header)"
-for h in ocete.ch www.ocete.ch dev.ocete.ch; do
+for h in octbase.io www.octbase.io dev.octbase.io; do
     # NB: no "|| echo ERR" inside the substitution — a failing curl still
     # prints its -w output, which would yield "000ERR" and match no case.
     code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $h" "http://127.0.0.1:80/") || code=000
@@ -257,11 +276,11 @@ done
 cat <<EOF
 
 $(ok "Done.")
-  ocete.ch / www.ocete.ch  now served by the ${WEB_USER} account (rootless
+  octbase.io / www.octbase.io  now served by the ${WEB_USER} account (rootless
   podman, ${NEW_TARGET}), starting automatically on boot via
   'systemctl --user ${UNIT_NAME}' + linger.
 
-  dev.ocete.ch is unchanged and still public with no password.
+  dev.octbase.io is unchanged and still public with no password.
 
   The original site at ${SRC_DIR} (account ${SRC_USER}) is left running and
   untouched for further development — it is simply no longer the public
