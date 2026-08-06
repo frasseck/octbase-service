@@ -1,10 +1,10 @@
-# The platform's OWN public demo (demo.ocete.ch) — not a paying client, but
+# The platform's OWN public demo (demo.octbase.io) — not a paying client, but
 # ledger-managed like one since its migration off the shared claude account
 # (playbooks/migrate-instance.yml; see the migrate-instance skill for the
 # runbook). Special: its .env sets OCTBASE_DEMO_MODE=true (seeded demo
 # logins), which the client compose override passes through.
 name: demo
-display_name: Public demo (demo.ocete.ch)
+display_name: Public demo (demo.octbase.io)
 contact: lars@beyags.com
 edition: enterprise
 jira_import: true

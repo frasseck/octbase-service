@@ -5,7 +5,7 @@
 #   - adopting a legacy stack (e.g. the demo running in a shared account)
 #     into the standard client model: dedicated Linux user, rootless podman,
 #     systemd --user unit, loopback ports, edge snippet, monitoring;
-#   - renaming a managed client (oct-old / old.ocete.ch → oct-new / new.ocete.ch).
+#   - renaming a managed client (oct-old / old.octbase.io → oct-new / new.octbase.io).
 #
 # The TARGET is a normal ledger entry (create it first, `ledger.py validate`);
 # the SOURCE (domain, account, path) is asked for interactively — or passed
@@ -45,7 +45,7 @@
 
   vars_prompt:
     - name: source_fqdn
-      prompt: Domain to move (e.g. demo.ocete.ch)
+      prompt: Domain to move (e.g. demo.octbase.io)
       private: false
     - name: source_user
       prompt: Linux account currently running it (e.g. claude, or oct-<old>)

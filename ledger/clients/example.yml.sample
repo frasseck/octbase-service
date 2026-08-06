@@ -2,7 +2,7 @@
 # The file name must equal the `name` field. Commit every change: the git
 # history of this directory is the audit trail of the client base.
 
-# Subdomain label and account suffix: acme → acme.ocete.ch, Linux user oct-acme.
+# Subdomain label and account suffix: acme → acme.octbase.io, Linux user oct-acme.
 # Lowercase letters, digits, hyphens, max 28 chars ("oct-" + name must fit
 # useradd's 32-char username limit); must not collide with reserved names
 # (www, dev, mail, api, octbase, admin).

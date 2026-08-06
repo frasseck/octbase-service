@@ -9,7 +9,7 @@
 # them on the command line to skip the prompts (non-interactive runs need
 # this):
 #   … -e setup_user=ubuntu -e admin_users='lfrasseck claude' \
-#     -e host_fqdn=prod01.ocete.ch
+#     -e host_fqdn=prod01.octbase.io
 # An empty host_fqdn leaves the node's current name alone.
 #
 # This is the step inventory/hosts.yml used to describe in prose ("adding a
@@ -83,7 +83,7 @@
 
     - name: host_fqdn
       prompt: >-
-        Hostname to give this node, e.g. prod01.ocete.ch. Leave empty to keep
+        Hostname to give this node, e.g. prod01.octbase.io. Leave empty to keep
         the name it already has
       private: false
       default: ""
@@ -260,7 +260,7 @@
             fail_msg: >-
               '{{ host_fqdn }}' is not a usable hostname. Expected labels of
               letters, digits and hyphens separated by dots, e.g.
-              prod01.ocete.ch — no spaces, no underscores, no leading or
+              prod01.octbase.io — no spaces, no underscores, no leading or
               trailing dot or hyphen.
             quiet: true
 

@@ -1,6 +1,6 @@
 # Octbase platform overview — repos, environments, and how they fit together
 
-**Scope:** the whole ocete.ch platform across its four working copies on the
+**Scope:** the whole octbase.io platform across its four working copies on the
 production host. The [README](../README.md) documents *this* repo (the
 per-client provisioning toolkit); this document is the map of everything
 around it: which repo owns what, what actually runs on the host, how a change
@@ -41,9 +41,9 @@ reserved in `ledger.py` so it is never allocated to a client).
 
 | Stack | Account | Compose project | systemd unit (user) | Host ports |
 |---|---|---|---|---|
-| Marketing `ocete.ch` | `oct-web` | `ocete` | `ocete-web.service` | web 8120 (loopback) |
-| Demo `demo.ocete.ch` | `oct-demo` | `octbase` | `octbase.service` | frontend 8110 · api 8111 · postgres 8112 |
-| Dev `dev.ocete.ch` | `claude` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
+| Marketing `octbase.io` | `oct-web` | `ocete` | `ocete-web.service` | web 8120 (loopback) |
+| Demo `demo.octbase.io` | `oct-demo` | `octbase` | `octbase.service` | frontend 8110 · api 8111 · postgres 8112 |
+| Dev `dev.octbase.io` | `claude` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
 | DB backup (legacy, dev only) | `claude` | — | `octbase-backup.timer` (daily 03:30) | — |
 | Client `<name>` | `oct-<name>` | `octbase` (per account) | per-user `octbase.service`, root `octbase-monitor.timer` + `octbase-fleet-backup.timer` (**not yet installed** — register D13) | frontend/api/postgres blocks from 8110, loopback-only |
 
@@ -64,8 +64,8 @@ the root-managed edge Caddyfile targets the host's public IP instead of
 instances are fully loopback-bound via `env.j2`. See consistency register C9.
 
 The public edge reverse proxy (root-managed Caddy, outside all four repos)
-terminates TLS for `ocete.ch`, `demo.ocete.ch`, `dev.ocete.ch` and, later,
-`<client>.ocete.ch`, and forwards to the loopback/host ports above.
+terminates TLS for `octbase.io`, `demo.octbase.io`, `dev.octbase.io` and, later,
+`<client>.octbase.io`, and forwards to the loopback/host ports above.
 
 ## 3. Inside the app stack (any instance)
 
@@ -146,7 +146,19 @@ One concern, one owner — everything else should link, not copy:
 
 The **product** is *Octbase* (`frasseck/octbase-app`, `OCTBASE_*` env prefix,
 `oct-` account prefix, `octbase-*` unit names). The **domain/brand of the
-hosted platform** is *ocete.ch* (`frasseck/ocete`, subdomains per client).
-Directory names on the host follow the domain (`dev.ocete.ch`,
-`demo.ocete.ch`), repo names follow the product — this split is intentional;
-don't "fix" one to match the other without deciding for the whole platform.
+hosted platform** was *ocete.ch* and became **`octbase.io` on 2026-08-06**
+(subdomains per client, `base_domain` in group_vars).
+
+That rename covered **hostnames only**. Three things deliberately still carry
+the old name and must not be swept up in a find-and-replace:
+
+- **Directory names on the host** — `~/dev.ocete.ch`, `~/ocete.ch`. They are
+  paths, not addresses; nothing resolves them.
+- **The marketing-site repo** — `frasseck/ocete`, and the `ocete` compose
+  project and `.env.ocete` that follow from it.
+- **Dated records** — the consistency register and CHANGELOG entries describe
+  what was true when written.
+
+Directory names originally followed the domain and repo names followed the
+product; with the domain moved, that split no longer lines up. Don't "fix" one
+to match the other without deciding for the whole platform.

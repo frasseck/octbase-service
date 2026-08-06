@@ -51,15 +51,15 @@
 octbase_hosts:
   hosts:
     prod:
-      ansible_host: ocete.ch
+      ansible_host: octbase.io
     # prod2:
-    #   ansible_host: prod2.ocete.ch
+    #   ansible_host: prod2.octbase.io
 
 # A provisioned entry looks like this — you wrote the first two lines,
 # setup-host.yml wrote everything between the markers:
 #
 #     prod2:
-#       ansible_host: prod2.ocete.ch
+#       ansible_host: prod2.octbase.io
 #       # BEGIN managed by setup-host.yml for prod2
 #       ansible_user: ubuntu
 #       ansible_port: 1012

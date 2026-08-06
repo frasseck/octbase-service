@@ -33,7 +33,7 @@ GROUP_VARS_FILE = (Path(__file__).resolve().parent.parent
 
 # Max 28 chars: the Linux account is "oct-<name>" and useradd caps
 # usernames at 32 characters. Must end in a letter or digit — the name is
-# also the subdomain label, and "acme-.ocete.ch" is not a valid DNS label.
+# also the subdomain label, and "acme-.octbase.io" is not a valid DNS label.
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,26}[a-z0-9]$")
 # "demo" is deliberately not reserved: the public demo is ledger-managed
 # since 2026-07-11 (clients/demo.yml, migrated via migrate-instance.yml).

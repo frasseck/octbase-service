@@ -48,7 +48,7 @@
 # `| default(x, true)` rather than a bare default on all three: an unset
 # ansible_port/ansible_user reaches a template as None at least as often as it
 # is undefined (the connection plugin defines them), and a bare default only
-# fires on undefined — which would print `ocete.ch:None as None` on exactly the
+# fires on undefined — which would print `octbase.io:None as None` on exactly the
 # hosts this repo did not provision.
 - name: Target
   ansible.builtin.debug:

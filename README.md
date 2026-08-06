@@ -1,7 +1,7 @@
 # octbase-service
 
 Operations toolkit for running **one Octbase stack per client** across the
-ocete.ch production host(s). It implements the stack-per-tenant model
+octbase.io production host(s). It implements the stack-per-tenant model
 recommended in the app repo's `docs/hosting-concept.md` (§5 Model A / §16 O1);
 the multi-host model is [`docs/fleet-concept.md`](docs/fleet-concept.md):
 
@@ -12,7 +12,7 @@ the multi-host model is [`docs/fleet-concept.md`](docs/fleet-concept.md):
 - each instance is **pinned to one inventory host** (`host:` in its ledger
   entry); every per-client playbook scopes itself to that host, and
   `migrate-host.yml` moves an instance between hosts,
-- a **subdomain** `<name>.ocete.ch` is routed by that host's edge reverse
+- a **subdomain** `<name>.octbase.io` is routed by that host's edge reverse
   proxy to the client's frontend port (DNS entries are created manually),
 - a **git-versioned ledger** (`ledger/clients/*.yml`) is the single source of
   truth for who the clients are, which edition they booked, add-ons, seats,
@@ -25,7 +25,7 @@ the multi-host model is [`docs/fleet-concept.md`](docs/fleet-concept.md):
 ```
             Internet                         production host
                │
-   DNS: <name>.ocete.ch ──▶ edge reverse proxy (Caddy, root-managed)
+   DNS: <name>.octbase.io ──▶ edge reverse proxy (Caddy, root-managed)
                                 │  includes /etc/octbase/edge/<name>.caddy
                                 ▼
                      127.0.0.1:<frontend_port>
@@ -117,7 +117,7 @@ One YAML file per client in `ledger/clients/`. The file name is the client
 See `ledger/clients/_example.yml.sample` for the full field reference:
 
 ```yaml
-name: acme                 # → acme.ocete.ch, Linux user oct-acme
+name: acme                 # → acme.octbase.io, Linux user oct-acme
 display_name: ACME GmbH
 contact: it@acme.example   # also the login of the first SUPER_ADMIN (see below)
 edition: business          # team | business | enterprise
@@ -166,18 +166,18 @@ ansible-playbook playbooks/create-instance.yml -e client=acme
 ```
 
 The playbook then prints the two **manual** steps:
-1. **DNS**: create `acme.ocete.ch` → A/AAAA record for the production host.
+1. **DNS**: create `acme.octbase.io` → A/AAAA record for the production host.
 2. **Edge proxy**: the playbook wrote `/etc/octbase/edge/acme.caddy`
-   (`acme.ocete.ch { reverse_proxy 127.0.0.1:8110 }`). Include it from the
+   (`acme.octbase.io { reverse_proxy 127.0.0.1:8110 }`). Include it from the
    edge Caddyfile (`import /etc/octbase/edge/*.caddy` once, then just reload).
 
-Verify: `curl -s https://acme.ocete.ch/health` → `{"status":"ok",…}`.
+Verify: `curl -s https://acme.octbase.io/health` → `{"status":"ok",…}`.
 
 On the **first** deploy only, the playbook also provisions the instance's
 initial administrator, and prints the credentials as its last output:
 
 ```
-Initial SUPER_ADMIN for acme.ocete.ch — shown once, not recoverable:
+Initial SUPER_ADMIN for acme.octbase.io — shown once, not recoverable:
   login:    it@acme.example
   password: <24 random characters>
 ```
@@ -185,7 +185,7 @@ Initial SUPER_ADMIN for acme.ocete.ch — shown once, not recoverable:
 **The login is the ledger's `contact`.** That address has to be a real mailbox
 the client can read: it is the only account on a fresh instance, and the app's
 self-service password reset is the only way back into it. (It used to be
-`admin@acme.ocete.ch` — an address on the client's own subdomain, with no
+`admin@acme.octbase.io` — an address on the client's own subdomain, with no
 mailbox and no MX record behind it, so the recovery path went nowhere.) A
 missing or malformed `contact` fails `ledger.py validate` for any `active`
 client, and the playbook refuses before it builds anything.
@@ -451,7 +451,7 @@ non-interactive run needs:
 ```bash
 ansible-playbook playbooks/setup-host.yml -e target_host=prod2 \
     -e setup_user=ubuntu -e admin_users='lfrasseck claude' \
-    -e host_fqdn=prod2.ocete.ch
+    -e host_fqdn=prod2.octbase.io
 ```
 
 **Naming the node** writes the short label to `/etc/hostname` and maps
@@ -596,7 +596,7 @@ What it does on each host:
   `octbase-monitor.timer`) iterates all registered clients
   (`/etc/octbase/clients.d/*.conf`, maintained by the playbooks), runs
   `check-health.sh` inside each client's rootless-podman context,
-  probes the public edge (`https://<name>.ocete.ch/health`), and checks
+  probes the public edge (`https://<name>.octbase.io/health`), and checks
   each client's **disk usage** (cached `du` of the home directory, refreshed
   hourly) against its ledger quota — ≥ `disk_alert_pct` (default 90%) flags
   the client DEGRADED,
@@ -615,7 +615,7 @@ re-run `create-instance.yml` (remove the field and re-run once the client is
 live). The global default is `edge_probe` in `inventory/group_vars/all/main.yml`.
 
 For external ("is the site reachable at all") coverage, point any uptime
-service at `https://<name>.ocete.ch/health` — the same endpoint the monitor
+service at `https://<name>.octbase.io/health` — the same endpoint the monitor
 uses.
 
 ## Fleet backups
