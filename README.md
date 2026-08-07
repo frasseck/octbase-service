@@ -80,6 +80,7 @@ so putting a client on `dev01` is an explicit choice.
 | `inventory/group_vars/all/main.yml` | Platform-wide defaults (domain, SMTP relay, source path, …) |
 | `inventory/group_vars/all/vault.yml` | Ansible Vault: the SMTP relay password (`vault.yml.sample` documents it) |
 | `playbooks/create-instance.yml` | Create **or update** a client instance from its ledger entry |
+| `playbooks/reconfigure-instance.yml` | Re-run the setup for an existing client, asking for each setting first (quota checked against real usage) |
 | `playbooks/sync-instance.yml` | Sync an existing instance's code to an app-repo branch (default `main`), rebuild + restart |
 | `playbooks/remove-instance.yml` | Back up and remove a client instance (needs `confirm=`) |
 | `playbooks/migrate-instance.yml` | Move an existing installation to its own client account and/or a new domain (same host) |
@@ -164,6 +165,7 @@ Ledger CLI (run from the repo root):
 ```bash
 ./ledger/ledger.py new acme --display "ACME GmbH" --edition business \
     --max-users 25 --contact it@acme.example   # scaffolds the file, allocates ports
+./ledger/ledger.py set acme --edition enterprise --max-users 50  # change fields in place
 ./ledger/ledger.py list        # table of all clients
 ./ledger/ledger.py validate    # names, editions, port collisions, add-on rules
 ./ledger/ledger.py next-ports  # next free port triplet
@@ -266,6 +268,39 @@ secrets or data. Platform-wide values from `inventory/group_vars/all/main.yml`
 for **every** active client:
 
 ```bash
+ansible-playbook playbooks/create-instance.yml -e client=acme
+```
+
+Or let the playbook ask, the same way onboarding does:
+
+```bash
+ansible-playbook playbooks/reconfigure-instance.yml -e client=acme
+```
+
+It shows every current value, asks for each in turn — **empty keeps it** — and
+writes the answers through `ledger.py set`, which edits the file line by line
+so its comments and `notes` survive. Then it re-runs the setup above. Answering
+everything empty is simply a plain re-run.
+
+Changeable here: `display_name`, `contact`, `edition`, `jira_import`,
+`max_users`, `app_version`, `disk_quota_gb`, `monitor_edge_probe` and the
+`resources` caps. **Not** changeable, because each has its own playbook and
+editing the field alone would only desynchronise the ledger from the fleet:
+`name` (→ `migrate-instance.yml`), `host` (→ `migrate-host.yml`), `status`
+(→ `suspend-instance.yml` / `remove-instance.yml`), and the allocated `ports`.
+
+Before applying, it measures the account's real disk usage and **warns if the
+new quota is below it** — `setquota` takes that number as the *hard* limit, so
+it does not shrink anything, it makes the next write fail. On a live stack that
+is Postgres unable to extend a table. The run pauses there so you can abort.
+
+For a non-interactive change, `ledger.py set` is the same edit without the
+dialog:
+
+```bash
+./ledger/ledger.py set acme --edition enterprise --max-users 50
+./ledger/ledger.py validate
+git add ledger/clients/acme.yml && git commit -m "ledger: acme to enterprise"
 ansible-playbook playbooks/create-instance.yml -e client=acme
 ```
 

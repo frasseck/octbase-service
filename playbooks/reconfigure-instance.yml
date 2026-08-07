@@ -1,0 +1,421 @@
+---
+# Re-run setup for an existing client, changing its settings on the way.
+#
+#   ansible-playbook playbooks/reconfigure-instance.yml -e client=acme
+#
+# The counterpart to create-instance.yml's onboarding dialog: that one
+# interviews an operator for a client the ledger does not have yet, this one
+# for a client it does. Every question offers the current value and an empty
+# answer keeps it, so answering nothing all the way through is simply a plain
+# re-run of the setup.
+#
+# It edits the ledger through `ledger.py set` — a line-targeted edit, so the
+# comments and prose `notes` these files carry as the audit trail survive it —
+# then hands over to create-instance.yml, which is idempotent and IS the update
+# path (see CLAUDE.md). Secrets and data are never touched.
+#
+# ── What it changes ──────────────────────────────────────────────────────
+#   display_name · contact · edition · jira_import · max_users · app_version
+#   disk_quota_gb · monitor_edge_probe · resources (memory_max / cpu_quota /
+#   tasks_max)
+#
+# ── What it will NOT change, and what owns each instead ──────────────────
+#   name    the ledger file name, the subdomain label and the Linux account
+#           suffix at once — migrate-instance.yml
+#   host    moving an instance is migrate-host.yml; editing the field alone
+#           would only aim every later playbook at a machine holding nothing
+#   status  suspend-instance.yml / remove-instance.yml own the lifecycle, and
+#           create-instance refuses a client that is not active anyway
+#   ports   allocated globally unique by ledger.py; a hand edit invites a
+#           collision that validate can only report after the fact
+#   registered / notes   a historical date, and prose — edit the file
+#
+# ⚠ The disk quota is checked against what the account actually uses before
+# anything is applied: a hard quota below current usage makes every write fail
+# the moment setquota runs, which for a live stack means Postgres, not a
+# warning in a log. See the second play.
+
+# ── The dialog ───────────────────────────────────────────────────────────
+- name: Reconfigure the client's ledger entry
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  vars:
+    ledger_py: "{{ playbook_dir }}/../ledger/ledger.py"
+    ledger_entry_file: "{{ playbook_dir }}/../ledger/clients/{{ client | default('') }}.yml"
+
+  tasks:
+    - name: A client name is required
+      ansible.builtin.assert:
+        that:
+          - client is defined
+          - client | length > 0
+        fail_msg: >-
+          Name the client with -e client=<name>. This playbook reconfigures an
+          existing one; create-instance.yml onboards a new one.
+        quiet: true
+
+    # stat, not include_vars with failed_when: false — the latter rewrites
+    # `failed` to false on EVERY result, so an assert reading it could never
+    # fire and a missing entry would surface as an undefined-variable error
+    # eleven questions later.
+    - name: Look for the client's ledger entry
+      ansible.builtin.stat:
+        path: "{{ ledger_entry_file }}"
+      register: ledger_entry
+
+    - name: The client must already be in the ledger
+      ansible.builtin.assert:
+        that: ledger_entry.stat.exists
+        fail_msg: >-
+          There is no ledger/clients/{{ client }}.yml. This playbook changes an
+          existing client; to onboard a new one run
+          create-instance.yml -e client={{ client }}, which asks the same
+          questions and scaffolds the entry.
+        quiet: true
+
+    - name: Load the current ledger entry
+      ansible.builtin.include_vars:
+        file: "../ledger/clients/{{ client }}.yml"
+        name: entry_loaded
+
+    - name: Normalize the entry
+      ansible.builtin.set_fact:
+        cur: "{{ entry_loaded }}"
+
+    # create-instance.yml asserts status == 'active' and would fail at the
+    # bottom of this run; saying so here costs the operator nothing instead of
+    # eleven questions.
+    - name: Only an active client can be reconfigured this way
+      ansible.builtin.assert:
+        that: cur.status == 'active'
+        fail_msg: >-
+          {{ client }} is '{{ cur.status }}', not active, so the setup below
+          would refuse it. Resume it first (status: active in the ledger, then
+          create-instance.yml), or use suspend-instance.yml /
+          remove-instance.yml if the lifecycle change is the point.
+        quiet: true
+
+    - name: A dialog needs a terminal, and must not run under --check
+      ansible.builtin.assert:
+        that: not ansible_check_mode
+        fail_msg: >-
+          This playbook asks questions and rewrites a ledger file, neither of
+          which belongs in a --check run. Use `ledger.py set {{ client }} …`
+          for a non-interactive change.
+        quiet: true
+
+    - name: Current settings
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            ['Reconfiguring ' ~ client ~ ' — empty answer keeps the current value.',
+             'Ctrl-C then A aborts; nothing is written until every question is answered.',
+             '',
+             '  display_name       ' ~ (cur.display_name | default('(unset)')),
+             '  contact            ' ~ (cur.contact | default('(unset)')),
+             '  edition            ' ~ cur.edition,
+             '  jira_import        ' ~ (cur.jira_import | default(false)),
+             '  max_users          ' ~ cur.max_users,
+             '  app_version        ' ~ (cur.app_version | default('(platform default)')),
+             '  disk_quota_gb      ' ~ (cur.disk_quota_gb | default('(platform default)')),
+             '  monitor_edge_probe ' ~ (cur.monitor_edge_probe | default('(follows edge_probe)')),
+             '  resources          ' ~ (cur.resources | default('(platform defaults)')),
+             '',
+             '  host ' ~ (cur.host | default('(default)')) ~ ' and the name are NOT changed here'
+                       ~ ' — see this playbook''s header.']
+          }}
+
+    - name: Display name
+      ansible.builtin.pause:
+        prompt: "Display name [{{ cur.display_name | default('unset') }}]"
+      register: ask_display
+
+    - name: Contact email
+      ansible.builtin.pause:
+        prompt: >-
+          Contact email [{{ cur.contact | default('unset') }}] — the client
+          record, not the admin login: the first SUPER_ADMIN was created on the
+          first deploy and changing this does not rename that account
+      register: ask_contact
+
+    - name: The contact must look like an email address
+      ansible.builtin.assert:
+        that: ask_contact.user_input | trim is match('^[^@\s]+@[^@\s]+\.[^@\s]+$')
+        fail_msg: "'{{ ask_contact.user_input | trim }}' is not an email address."
+        quiet: true
+      when: ask_contact.user_input | trim | length > 0
+
+    - name: Edition
+      ansible.builtin.pause:
+        prompt: "Edition — team | business | enterprise [{{ cur.edition }}]"
+      register: ask_edition
+
+    - name: The edition must be one of the three booked products
+      ansible.builtin.assert:
+        that: ask_edition.user_input | trim | lower in ['team', 'business', 'enterprise']
+        fail_msg: >-
+          '{{ ask_edition.user_input | trim }}' is not an edition. Expected
+          team, business or enterprise.
+        quiet: true
+      when: ask_edition.user_input | trim | length > 0
+
+    - name: Jira-CSV-import add-on
+      ansible.builtin.pause:
+        prompt: >-
+          Book the Jira-CSV-import add-on? yes / no
+          [{{ cur.jira_import | default(false) }}]
+      register: ask_jira
+
+    - name: Licensed seats
+      ansible.builtin.pause:
+        prompt: "Licensed seats (OCTBASE_MAX_USERS) [{{ cur.max_users }}]"
+      register: ask_seats
+
+    - name: Seats must be a whole number
+      ansible.builtin.assert:
+        that: ask_seats.user_input | trim is match('^[1-9][0-9]*$')
+        fail_msg: "'{{ ask_seats.user_input | trim }}' is not a seat count."
+        quiet: true
+      when: ask_seats.user_input | trim | length > 0
+
+    - name: App version
+      ansible.builtin.pause:
+        prompt: >-
+          App version [{{ cur.app_version | default('platform default') }}] —
+          this REDEPLOYS the client at that release tag
+      register: ask_version
+
+    - name: The app version must be the bare number, without a leading v
+      ansible.builtin.assert:
+        that: ask_version.user_input | trim is match('^[0-9]')
+        fail_msg: >-
+          '{{ ask_version.user_input | trim }}' should be the version alone,
+          e.g. 1.0.1 — the playbook adds the 'v' when it resolves the tag.
+        quiet: true
+      when: ask_version.user_input | trim | length > 0
+
+    - name: Disk quota
+      ansible.builtin.pause:
+        prompt: >-
+          Disk quota for the whole client account, in GB
+          [{{ cur.disk_quota_gb | default('platform default') }}] — checked
+          against actual usage before it is applied
+      register: ask_disk
+
+    - name: The disk quota must be a whole number of GB
+      ansible.builtin.assert:
+        that: ask_disk.user_input | trim is match('^[1-9][0-9]*$')
+        fail_msg: "'{{ ask_disk.user_input | trim }}' is not a size in GB."
+        quiet: true
+      when: ask_disk.user_input | trim | length > 0
+
+    - name: Public edge health probe
+      ansible.builtin.pause:
+        prompt: >-
+          Probe the client's public /health from the fleet monitor? yes / no
+          [{{ cur.monitor_edge_probe | default('follows edge_probe') }}] — no
+          while DNS or the edge vhost is still pending
+      register: ask_probe
+
+    # The account-level caps: all containers AND image builds count against
+    # them. set-resources.yml applies these alone, without a redeploy.
+    - name: Memory cap
+      ansible.builtin.pause:
+        prompt: >-
+          Account memory cap, e.g. 4G
+          [{{ (cur.resources | default({})).memory_max | default('platform default') }}]
+      register: ask_memory
+
+    - name: CPU cap
+      ansible.builtin.pause:
+        prompt: >-
+          Account CPU quota, e.g. 300% (100% = one core)
+          [{{ (cur.resources | default({})).cpu_quota | default('platform default') }}]
+      register: ask_cpu
+
+    - name: Task cap
+      ansible.builtin.pause:
+        prompt: >-
+          Account TasksMax, e.g. 1024
+          [{{ (cur.resources | default({})).tasks_max | default('platform default') }}]
+      register: ask_tasks
+
+    # Only the answers actually given become flags, so ledger.py leaves every
+    # other field — and every comment — exactly as it found it.
+    - name: Assemble the ledger change
+      ansible.builtin.set_fact:
+        ledger_set_argv: >-
+          {{ [ledger_py, 'set', client]
+             + (['--display', ask_display.user_input | trim]
+                if ask_display.user_input | trim else [])
+             + (['--contact', ask_contact.user_input | trim]
+                if ask_contact.user_input | trim else [])
+             + (['--edition', ask_edition.user_input | trim | lower]
+                if ask_edition.user_input | trim else [])
+             + (['--jira-import']
+                if ask_jira.user_input | trim | lower in ['y', 'yes'] else [])
+             + (['--no-jira-import']
+                if ask_jira.user_input | trim | lower in ['n', 'no'] else [])
+             + (['--max-users', ask_seats.user_input | trim]
+                if ask_seats.user_input | trim else [])
+             + (['--app-version', ask_version.user_input | trim]
+                if ask_version.user_input | trim else [])
+             + (['--disk-quota-gb', ask_disk.user_input | trim]
+                if ask_disk.user_input | trim else [])
+             + (['--monitor-edge-probe']
+                if ask_probe.user_input | trim | lower in ['y', 'yes'] else [])
+             + (['--no-monitor-edge-probe']
+                if ask_probe.user_input | trim | lower in ['n', 'no'] else [])
+             + (['--memory-max', ask_memory.user_input | trim]
+                if ask_memory.user_input | trim else [])
+             + (['--cpu-quota', ask_cpu.user_input | trim]
+                if ask_cpu.user_input | trim else [])
+             + (['--tasks-max', ask_tasks.user_input | trim]
+                if ask_tasks.user_input | trim else []) }}
+
+    - name: Apply the change to the ledger
+      ansible.builtin.command:
+        argv: "{{ ledger_set_argv }}"
+      register: ledger_set
+      changed_when: true
+      # Three elements means the interpreter, 'set' and the client name — every
+      # answer was empty, so this is a plain re-run and there is nothing to write.
+      when: ledger_set_argv | length > 3
+
+    - name: What changed in the ledger
+      ansible.builtin.debug:
+        msg: >-
+          {{ ledger_set.stdout_lines
+             if (ledger_set_argv | length > 3)
+             else ['No settings changed — re-running the setup as it stands.'] }}
+
+    - name: Validate the whole ledger
+      ansible.builtin.command:
+        argv: ["{{ ledger_py }}", validate]
+      changed_when: false
+
+    - name: The change is not committed yet
+      ansible.builtin.debug:
+        msg:
+          - "⚠ ledger/clients/{{ client }}.yml is written but UNCOMMITTED."
+          - "  The git history of that directory is the audit trail of the"
+          - "  client base — commit it:"
+          - "    git add ledger/clients/{{ client }}.yml && git commit"
+      when: ledger_set_argv | length > 3
+
+# ── The quota reality check ──────────────────────────────────────────────
+# Before the setup applies it: create-instance.yml calls setquota with the
+# ledger's number as the HARD limit, and a hard limit below what the account
+# already holds does not shrink anything — it makes the next write fail. For a
+# live stack that is Postgres failing to extend a table, not a log line.
+- name: Check the disk quota against what the account actually uses
+  hosts: octbase_hosts
+  become: true
+
+  vars:
+    linux_user: "{{ client_user_prefix }}{{ client }}"
+    home_dir: "/home/{{ linux_user }}"
+
+  pre_tasks:
+    # Re-read rather than carry facts across plays: the file was just rewritten,
+    # so this is the authoritative copy either way.
+    - name: Load the updated ledger entry
+      ansible.builtin.include_vars:
+        file: "../ledger/clients/{{ client }}.yml"
+        name: entry_loaded
+
+    - name: Normalize the entry
+      ansible.builtin.set_fact:
+        client_ledger: "{{ entry_loaded }}"
+
+    - name: Check and announce the client's host
+      ansible.builtin.include_tasks: tasks/assert-client-host.yml
+      vars:
+        client_host: "{{ client_ledger.host | default(default_client_host) }}"
+
+    - name: Scope the play to the client's host
+      ansible.builtin.meta: end_host
+      when: inventory_hostname != (client_ledger.host | default(default_client_host))
+
+  tasks:
+    - name: Look for the client account's home directory
+      ansible.builtin.stat:
+        path: "{{ home_dir }}"
+      register: client_home
+
+    # Under become: the homes are 0750 and owned by the client account, so an
+    # unprivileged du reports the directory itself and nothing in it.
+    - name: Measure what the account uses
+      ansible.builtin.command:
+        argv: [du, -sk, "{{ home_dir }}"]
+      register: home_usage
+      changed_when: false
+      when: client_home.stat.exists
+
+    - name: Compare usage with the quota that is about to be applied
+      ansible.builtin.set_fact:
+        used_kb: "{{ home_usage.stdout.split() | first | int }}"
+        quota_kb: "{{ (client_ledger.disk_quota_gb | default(default_disk_quota_gb) | int)
+                      * 1024 * 1024 }}"
+      when: client_home.stat.exists
+
+    - name: Report the disk position
+      ansible.builtin.debug:
+        msg: >-
+          {{ linux_user }} uses
+          {{ (used_kb | int / 1024 / 1024) | round(2) }} GB of the
+          {{ client_ledger.disk_quota_gb | default(default_disk_quota_gb) }} GB
+          quota ({{ ((used_kb | int / quota_kb | int) * 100) | round(1) }}%).
+      when:
+        - client_home.stat.exists
+        - used_kb | int <= quota_kb | int
+
+    - name: The quota is smaller than the space already used
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            ['⚠  WARNING — the new quota is BELOW current usage.',
+             '',
+             '   account : ' ~ linux_user,
+             '   uses    : ' ~ ((used_kb | int / 1024 / 1024) | round(2)) ~ ' GB',
+             '   new cap : ' ~ (client_ledger.disk_quota_gb | default(default_disk_quota_gb)) ~ ' GB (hard)',
+             '',
+             '   create-instance.yml below passes this to setquota as the HARD',
+             '   limit. It does not delete anything and it does not shrink the',
+             '   account — it makes the NEXT WRITE FAIL. On a live stack that is',
+             '   Postgres unable to extend a table and uploads returning errors,',
+             '   starting the moment the quota is set.',
+             '',
+             '   Raise the quota, or free space in the account first',
+             '   (~' ~ (((used_kb | int - quota_kb | int) / 1024 / 1024) | round(2)) ~ ' GB over).']
+          }}
+      when:
+        - client_home.stat.exists
+        - used_kb | int > quota_kb | int
+
+    # The whole playbook is interactive already, so the abort window is a
+    # keypress rather than a flag nobody would have set in advance.
+    - name: Confirm before applying a quota below current usage
+      ansible.builtin.pause:
+        prompt: >-
+          Press ENTER to apply it anyway, or Ctrl-C then A to abort and fix the
+          quota first
+      when:
+        - client_home.stat.exists
+        - used_kb | int > quota_kb | int
+
+    - name: This client has not been provisioned yet
+      ansible.builtin.debug:
+        msg: >-
+          {{ home_dir }} does not exist, so there is nothing to measure — the
+          setup below provisions the account for the first time.
+      when: not client_home.stat.exists
+
+# ── Apply ────────────────────────────────────────────────────────────────
+# create-instance.yml IS the update path: idempotent, re-applies every ledger-
+# and platform-managed setting, restarts only what changed, and never touches
+# secrets or data. Its own ledger dialog no-ops here — the entry exists.
+- ansible.builtin.import_playbook: create-instance.yml
