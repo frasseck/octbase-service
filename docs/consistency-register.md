@@ -37,6 +37,7 @@ the live host (§2.4; the v1.0.5–v1.0.7 releases had skipped this checklist).
 | C13 | **Deploy source**: `create-instance.yml` deploys the app repo **tag `v<app_version>`** the ledger names, cloned fresh into `octbase_release_cache`. Every `app_version` (and `octbase_version`) must exist as a tag in `octbase_repo` — the play asserts this up front. **Structural, not a convention**: the version selects the code, so it cannot disagree with the stamp it writes (C4) | ledger `app_version` · `inventory/group_vars/all/main.yml` (`octbase_version`) | app repo tags · `create-instance.yml` · *(superseded the hand-managed `octbase_src` working-tree rsync — see D-series note below)* |
 | C16 | **Client registry conf format** (`/etc/octbase/clients.d/<name>.conf`): `NAME`/`USER_ACCT`/`DOMAIN`/`FRONTEND_PORT`/`API_PORT`/`HOME_DIR`/`DISK_QUOTA_GB` (+ optional `EDGE_PROBE`) — sourced as shell variables | `playbooks/templates/client-registry.conf.j2` | `monitor-all.sh` (health, edge, disk) · `backup-fleet.sh` (dump + files) — a key rename must touch all three |
 | C17 | **Instance placement**: a ledger `host:` value must name an entry in `inventory/hosts.yml`; per-client playbooks no-op on every other host, so a wrong value silently deploys nowhere (guarded by an assert + `ledger.py validate`) | `ledger/clients/*.yml` (`host:`) + `default_client_host` in group_vars | `inventory/hosts.yml` host names · the `end_host` guards in every per-client playbook |
+| C18 | **AppArmor profile coverage**: every container the platform runs has a profile in `playbooks/templates/apparmor/`, listed in `playbooks/vars/apparmor-profiles.yml`, and the profile name matches the `security_opt` the compose override sets. A service added to a compose file without one is a container with no policy at all | app `podman-compose.yml` services · octbase-web `podman-compose.yml` services | `playbooks/templates/apparmor/*.j2` · `playbooks/vars/apparmor-profiles.yml` · `podman-compose.client.yml.j2`'s `security_opt` (rendered only when `client_apparmor` is on — see §2.19) |
 | C13b | **Git deploy source**: `sync-instance.yml` deploys `octbase_branch` (default `main`) of `octbase_repo` instead of the `octbase_src` working tree — same rsync excludes, but a clean branch tip, not local edits. It does **not** re-stamp `OCTBASE_APP_VERSION` (that stays ledger/create-instance-driven, C4), so a branch synced ahead of its stamped version reports a stale version until `create-instance.yml` re-runs | `inventory/group_vars/all/main.yml` (`octbase_repo`/`octbase_branch`) | `sync-instance.yml` · app repo branch tip · C4 version stamp |
 
 ## 2. Drift found 2026-07-10 — all fixed same day
@@ -1180,6 +1181,63 @@ already-scaffolded `test` ledger entry / half-provisioned `oct-test` account
 live on the admin machine and its target host — offboard with
 `remove-instance.yml` if it was a throwaway.
 
+## 2.19 AppArmor profiles for the platform (2026-08-07, new C18)
+
+`setup-host.yml` now lays down and loads nine AppArmor profiles on every fleet
+host (`playbooks/templates/apparmor/`, catalogued in
+`playbooks/vars/apparmor-profiles.yml`), and `install-apparmor.yml` carries the
+same policy to hosts already in service without re-running the baseline around
+it — both run `playbooks/tasks/apparmor.yml`, so they cannot drift. Three
+profiles are worn by something today; six are not, and the reason is a platform
+fact worth recording here rather than rediscovering.
+
+**Rootless podman cannot apply an AppArmor profile.** Measured on `dev01`
+(podman 5.7.0, Ubuntu 26.04, kernel AppArmor enabled):
+
+```
+$ podman info  →  "apparmorEnabled": false, "rootless": true
+$ podman run --rm --security-opt apparmor=<any> <image> /bin/true
+Error: apparmor profile "<any>" specified, but Apparmor is not enabled on this system
+```
+
+Two independent causes, both about rootlessness rather than the Ubuntu build
+(that binary *does* carry AppArmor support — `apparmor_parser`,
+`cannot load AppArmor profile` and `AppArmor is not supported in rootless mode`
+are all in it):
+
+1. rootless podman re-execs into a user namespace where securityfs is not
+   mounted, so its `IsEnabled()` probe reads false and any profile request is
+   rejected outright — a `security_opt` in the compose override would fail every
+   container in the stack, not silently go unenforced;
+2. `containers/common` refuses AppArmor profiles in rootless mode regardless,
+   because loading one needs root.
+
+Client stacks are rootless by design (one Linux account per tenant is the whole
+tenancy model), so the six container profiles are loaded, reviewable and
+attached to nothing. `client_apparmor` in `group_vars` wires them into
+`podman-compose.client.yml.j2`; `create-instance.yml` probes the client's own
+podman first and **refuses** rather than deploying a stack whose compose file
+claims a confinement the runtime would reject.
+
+Two contract-adjacent notes:
+
+- **`podman-compose.client.yml` moved to `playbooks/templates/` as a `.j2`** so
+  the `security_opt` blocks can be conditional. With `client_apparmor` false —
+  the default — the deployed file is byte for byte what it was, plus a comment.
+  Every C1/C2 check that greps that path needs the new one (§3 updated).
+- **The edge proxy is confined through a `caddy.service` drop-in, not by
+  executable path.** A profile attached to `/usr/bin/caddy` would also catch the
+  caddy *inside* the frontend, mobile and marketing containers: AppArmor
+  resolves an executable's path against the container's own root, so the image's
+  `/usr/bin/caddy` matches a host attachment. It ships in complain mode.
+
+**Not verified by a real run.** No Ansible on the production host, so the
+playbook change has had local YAML/Jinja checks only; every profile was parsed
+with `apparmor_parser -Q --skip-cache` in both modes, which proves the policy is
+loadable, not that it is complete. Expect `apparmor="ALLOWED"` audit lines from
+the complain-mode edge profile on the first real run, and read them before
+promoting it to enforce.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash
@@ -1192,9 +1250,15 @@ grep -oE '^OCTBASE_[A-Z_]+' playbooks/templates/env.j2 | sort -u \
 # dead. Neither compose file uses env_file:, so .env reaches a container only
 # via ${NAME} interpolation. Anything listed here is written but never applied.
 grep -oE '^[A-Z][A-Z0-9_]*' playbooks/templates/env.j2 | sort -u > /tmp/env-keys
-cat $OCTBASE_SRC/podman-compose.yml playbooks/files/podman-compose.client.yml \
+cat $OCTBASE_SRC/podman-compose.yml playbooks/templates/podman-compose.client.yml.j2 \
   | grep -oE '\$\{[A-Z][A-Z0-9_]*' | tr -d '${' | sort -u > /tmp/interp-keys
 comm -23 /tmp/env-keys /tmp/interp-keys   # expect: no output
+
+# C18 — every container service has an AppArmor profile. A service added to
+# either compose file without one runs with no policy at all.
+{ grep -oE '^  [a-z][a-z0-9-]*:' $OCTBASE_SRC/podman-compose.yml; \
+  grep -oE '^  [a-z][a-z0-9-]*:' ~/octbase-web/podman-compose.yml; } \
+  | tr -d ' :' | sort -u   # compare against playbooks/vars/apparmor-profiles.yml
 
 # C4/C13 — every stamp in this repo: tagged, changelogged, and how far behind
 scripts/check-version-drift.py            # WARN = pinned behind, FAIL = broken stamp

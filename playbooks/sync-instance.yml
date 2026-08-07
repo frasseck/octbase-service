@@ -96,6 +96,12 @@
           {{ app_dir }} has no podman-compose.yml — nothing to sync. Provision
           the instance with create-instance.yml first.
 
+    # This play refreshes the compose override and then ALWAYS restarts, so an
+    # override naming AppArmor profiles the runtime cannot apply would stop a
+    # live instance. Checked here, in pre_tasks, before anything is written.
+    - name: Check the container runtime can apply the AppArmor profiles
+      ansible.builtin.include_tasks: tasks/assert-apparmor-capable.yml
+
   tasks:
     # On the ADMIN machine, not the host: the admin account owns the GitHub
     # deploy key (root SSH to GitHub is neither wanted nor set up), exactly as
@@ -228,10 +234,11 @@
 
     # Kept in step with create-instance: a base podman-compose.yml change on the
     # branch may need a matching override, and the override is not in the app
-    # repo (rsync never overwrites it). copy is a no-op when already current.
+    # repo (rsync never overwrites it). Templated for the same reason as there
+    # (client_apparmor); a no-op when the rendered file is already current.
     - name: Refresh the production compose override
-      ansible.builtin.copy:
-        src: podman-compose.client.yml
+      ansible.builtin.template:
+        src: podman-compose.client.yml.j2
         dest: "{{ app_dir }}/podman-compose.client.yml"
         owner: "{{ linux_user }}"
         group: "{{ linux_user }}"

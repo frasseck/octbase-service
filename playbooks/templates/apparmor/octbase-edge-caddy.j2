@@ -1,0 +1,95 @@
+# {{ ansible_managed }}
+#
+# AppArmor profile for the PUBLIC EDGE Caddy — the root-managed reverse proxy
+# that terminates TLS for every client domain on this host and forwards to the
+# stacks' loopback ports.
+#
+# ⚠ NAMED PROFILE, NO ATTACHMENT PATH — on purpose. A profile attached to
+# /usr/bin/caddy would also catch the caddy running INSIDE the frontend, mobile
+# and marketing containers: their image has a binary at that same path, and
+# AppArmor resolves the path against the container's own root. The edge would
+# be confined and so would three containers that have nothing to do with this
+# policy. Instead setup-host.yml drops in
+# /etc/systemd/system/caddy.service.d/10-octbase-apparmor.conf with
+# `AppArmorProfile=-octbase-edge-caddy`, which applies it to that unit alone.
+# The leading `-` means "carry on if the profile is not loaded": a missing
+# profile must not take the fleet's front door down.
+#
+# Ships in COMPLAIN mode (apparmor_mode_edge) — this is the one component whose
+# failure is every client domain at once, and the one this repo does not own.
+# Run it for a while, read `journalctl -k | grep 'apparmor="ALLOWED"'`, add what
+# is genuinely missing, then set apparmor_mode_edge=enforce and re-run
+# setup-host.yml.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile octbase-edge-caddy{{ ' flags=(complain)' if item.mode == 'complain' else '' }} {
+  include <abstractions/base>
+  include <abstractions/nameservice>
+  include <abstractions/openssl>
+  include <abstractions/ssl_certs>
+
+  # Ports 80 and 443. Debian's unit grants this ambiently; the profile has to
+  # allow it or the socket never binds.
+  capability net_bind_service,
+
+  # HTTP/1.1 + HTTP/2 over TCP, HTTP/3 over UDP (setup-host.yml opens 443/udp
+  # in ufw for exactly this), outbound TCP for ACME and for the reverse proxy
+  # to the stacks' loopback ports, DNS for the ACME endpoints.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+  network unix stream,
+  network unix dgram,
+  audit deny network inet raw,
+  audit deny network inet6 raw,
+  audit deny network packet,
+
+  /{usr/,}bin/caddy mr,
+
+  # Its configuration: the base Caddyfile plus the per-client vhost snippets
+  # the playbooks generate. Read-only — the playbooks write those files, Caddy
+  # never does.
+  /etc/caddy/ r,
+  /etc/caddy/** r,
+  /etc/octbase/ r,
+  /etc/octbase/edge/ r,
+  /etc/octbase/edge/** r,
+
+  # Its state: the ACME account key and every issued certificate + private key
+  # live here. This directory is the reason the profile exists.
+  /var/lib/caddy/ rw,
+  /var/lib/caddy/** rwkl,
+  /var/log/caddy/ rw,
+  /var/log/caddy/** rwk,
+  owner /tmp/** rwk,
+  owner /run/caddy/** rwk,
+
+  # Go runtime + TLS: thread and memory tuning, and the system entropy source.
+  @{PROC}/sys/kernel/{osrelease,ostype,pid_max} r,
+  @{PROC}/sys/net/core/somaxconn r,
+  owner @{PROC}/@{pid}/{cgroup,limits,maps,mountinfo,stat,status} r,
+  /sys/kernel/mm/transparent_hugepage/hpage_pmd_size r,
+
+  # The edge proxies to client stacks; it never reads them. A rule here would
+  # mean the front door could read every client's data directory and secrets.
+  audit deny /home/** rw,
+  audit deny /var/backups/** rw,
+  audit deny /etc/{shadow,gshadow,sudoers} r,
+  audit deny /etc/** w,
+
+  # A reverse proxy executes nothing. Caddy's own subcommands (`caddy reload`,
+  # run by systemd's ExecReload) re-exec the same binary, allowed above.
+  audit deny /{usr/,}bin/{sh,bash,dash,python*,perl} x,
+  deny @{PROC}/sys/** w,
+  deny /sys/** w,
+  audit deny mount,
+  audit deny umount,
+  audit deny ptrace (trace, read),
+
+  # Site-specific additions — an extra static root, a plugin's state directory.
+  include if exists <local/octbase-edge-caddy>
+}

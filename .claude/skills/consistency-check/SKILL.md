@@ -30,7 +30,7 @@ cd ~/octbase-service
 grep -oE '^OCTBASE_[A-Z_]+' playbooks/templates/env.j2 | sort -u \
   | while read k; do grep -qE "^#?$k=" $OCTBASE_SRC/.env.example || echo "MISSING in .env.example: $k"; done
 # …and the same for the client compose override's env pass-throughs:
-grep -oE 'OCTBASE_[A-Z_]+' playbooks/files/podman-compose.client.yml | sort -u \
+grep -oE 'OCTBASE_[A-Z_]+' playbooks/templates/podman-compose.client.yml.j2 | sort -u \
   | while read k; do grep -qE "^#?$k=" $OCTBASE_SRC/.env.example || echo "MISSING in .env.example: $k"; done
 
 # C4/C13 — this repo's stamps: tagged, changelogged, and how far behind the

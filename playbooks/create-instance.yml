@@ -393,6 +393,12 @@
         path: "{{ home_dir }}"
         mode: "0750"
 
+    # ── AppArmor confinement (opt-in, group_vars: client_apparmor) ──
+    # Checked here — right after the account exists and before anything is
+    # built — because the answer decides whether this run may proceed at all.
+    - name: Check the container runtime can apply the AppArmor profiles
+      ansible.builtin.include_tasks: tasks/assert-apparmor-capable.yml
+
     # ── Account-level resource caps (docs/fleet-concept.md §2) ──
     - name: Set resource / disk-quota facts
       ansible.builtin.set_fact:
@@ -551,9 +557,12 @@
       notify: Restart stack
       when: octbase_src_remote is defined
 
+    # template, not copy: the override carries a security_opt per service when
+    # client_apparmor is on (group_vars). With it off — the default — the file
+    # is exactly the static one this task used to install.
     - name: Install production compose override
-      ansible.builtin.copy:
-        src: podman-compose.client.yml
+      ansible.builtin.template:
+        src: podman-compose.client.yml.j2
         dest: "{{ app_dir }}/podman-compose.client.yml"
         owner: "{{ linux_user }}"
         group: "{{ linux_user }}"

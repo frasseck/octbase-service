@@ -1,0 +1,86 @@
+# {{ ansible_managed }}
+#
+# AppArmor profile for the CONTAINER `octbase-frontend` of an Octbase stack —
+# the desktop SPA and the stack's front door (app repo
+# octbase-frontend/Containerfile: Caddy serving /usr/share/caddy and
+# reverse-proxying /api to octbase-api over the compose network).
+#
+# ⚠ NOTHING WEARS THIS PROFILE YET — see octbase-postgres for why (rootless
+# podman refuses AppArmor); it applies when `client_apparmor: true` finds a
+# runtime that can honour it.
+#
+# This is the container the edge proxy actually talks to, so it is the first
+# thing an attacker reaches. It serves static files and proxies one upstream:
+# it writes nothing but its own TLS/state scratch, and executes nothing but
+# itself.
+#
+# Paths below are CONTAINER paths, not the host's — which is also why this is a
+# named profile with no attachment path: the host has its own /usr/bin/caddy
+# (the edge), confined separately by octbase-edge-caddy.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile octbase-frontend flags=(attach_disconnected,mediate_deleted{{ ',complain' if item.mode == 'complain' else '' }}) {
+  include <abstractions/base>
+
+  # Binds 8080 inside the container — above 1024, so not even this one is
+  # strictly needed; kept because the image is free to change its port.
+  capability net_bind_service,
+  audit deny capability sys_admin,
+  audit deny capability sys_module,
+  audit deny capability sys_ptrace,
+  audit deny capability net_admin,
+  audit deny capability net_raw,
+  audit deny capability mknod,
+
+  # Inbound from the edge proxy; outbound to octbase-api and octbase-mobile on
+  # the compose network, resolved through aardvark-dns.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+  network unix stream,
+  network unix dgram,
+  audit deny network inet raw,
+  audit deny network inet6 raw,
+  audit deny network packet,
+
+  /{usr/,}bin/caddy mr,
+
+  # Its configuration (the Caddyfile plus the two auth-*.caddy snippets the
+  # installation-password gate imports) and the built site it serves.
+  /etc/caddy/ r,
+  /etc/caddy/** r,
+  /usr/share/caddy/ r,
+  /usr/share/caddy/** r,
+  /etc/{hosts,hostname,resolv.conf,nsswitch.conf,localtime,ssl/**} r,
+  @{PROC}/sys/net/core/somaxconn r,
+  owner @{PROC}/@{pid}/{cgroup,limits,maps,mountinfo,stat,status} r,
+  /sys/kernel/mm/transparent_hugepage/hpage_pmd_size r,
+
+  # Caddy's XDG state/config directories inside the image, and scratch.
+  /data/ rw,
+  /data/** rwkl,
+  /config/ rw,
+  /config/** rwkl,
+  owner /tmp/** rwk,
+
+  # A static file server rewrites neither its site nor its config.
+  audit deny /usr/share/caddy/** w,
+  audit deny /etc/** w,
+  audit deny /{usr,bin,sbin,lib,lib64,opt,root,srv}/** w,
+
+  # It serves files and proxies; it starts no processes.
+  audit deny /{bin,sbin,usr,lib,lib64,opt,srv,etc,tmp,var,run,home,root}/** x,
+
+  deny @{PROC}/sys/** w,
+  deny /sys/** w,
+  audit deny mount,
+  audit deny umount,
+  audit deny pivot_root,
+  ptrace (trace, read, tracedby, readby) peer=octbase-frontend,
+
+  include if exists <local/octbase-frontend>
+}

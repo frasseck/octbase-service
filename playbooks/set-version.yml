@@ -96,6 +96,12 @@
           {{ app_dir }} has no podman-compose.yml — nothing to version.
           Provision the instance with create-instance.yml first.
 
+    # Same reason as in sync-instance.yml: this play refreshes the compose
+    # override and restarts, so an override naming AppArmor profiles the
+    # runtime cannot apply would stop a live instance.
+    - name: Check the container runtime can apply the AppArmor profiles
+      ansible.builtin.include_tasks: tasks/assert-apparmor-capable.yml
+
     - name: Resolve the release tag
       ansible.builtin.set_fact:
         release_tag: "v{{ effective_version }}"
@@ -241,10 +247,11 @@
 
     # Kept in step with create-instance/sync-instance: a base compose change in
     # the new release may need a matching override, and the override is not in
-    # the app repo (rsync never overwrites it).
+    # the app repo (rsync never overwrites it). Templated for the same reason as
+    # there (client_apparmor).
     - name: Refresh the production compose override
-      ansible.builtin.copy:
-        src: podman-compose.client.yml
+      ansible.builtin.template:
+        src: podman-compose.client.yml.j2
         dest: "{{ app_dir }}/podman-compose.client.yml"
         owner: "{{ linux_user }}"
         group: "{{ linux_user }}"

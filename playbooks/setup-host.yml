@@ -90,6 +90,7 @@
 
   vars_files:
     - vars/host-packages.yml
+    - vars/apparmor-profiles.yml
 
   vars:
     # Everything below matches the production host. Override per run with -e.
@@ -733,6 +734,19 @@
         enabled: true
         state: "{{ 'reloaded' if (edge_caddyfile_written.changed or edge_import.changed) else 'started' }}"
 
+    # ── AppArmor ─────────────────────────────────────────────────────────
+    # Mandatory access control for the platform's own components, and the
+    # policy for every container it runs. What each profile is for, and which
+    # of them anything actually wears, is in vars/apparmor-profiles.yml.
+    #
+    # Shared with install-apparmor.yml, which applies exactly this to an
+    # already-provisioned host without re-running the baseline around it.
+    #
+    # Placed after the edge section deliberately: the caddy drop-in it writes
+    # must not name a profile the kernel has not been given yet.
+    - name: Deploy and load the AppArmor policy
+      ansible.builtin.include_tasks: tasks/apparmor.yml
+
     # ── Record the host in the inventory ─────────────────────────────────
     # On the ADMIN machine, not the target: how to reach this host is the
     # admin machine's knowledge. The port in particular is otherwise an edit
@@ -786,6 +800,12 @@
                 '  (' ~ (host_admin_users | join(', ') or 'none') ~ ') carry the same key this run used,',
                 '  so give an operator their own by replacing that account\'s authorized_keys.']
                if sshd_conf.changed else [])
+            + (['',
+                'AppArmor: ' ~ (octbase_apparmor_profiles | length) ~ ' profiles loaded — see the',
+                '  "AppArmor policy on this host" output above for what enforces and what does not.',
+                '  Re-apply just this to any host later:  ansible-playbook playbooks/install-apparmor.yml']
+               if apparmor_ok | bool else
+               ['', '⚠ AppArmor is NOT enabled on this kernel — no Octbase profile was loaded.'])
             + (['',
                 '⚠ Disk quotas are configured in fstab but NOT yet active: the filesystem',
                 '  is mounted without usrquota. REBOOT to activate — until then',

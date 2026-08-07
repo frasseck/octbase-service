@@ -1,0 +1,98 @@
+# {{ ansible_managed }}
+#
+# AppArmor profile for the CONTAINER `postgres` of an Octbase stack — the
+# client's database (app repo podman-compose.yml, image
+# registry.access.redhat.com/hi/postgresql, pinned by digest).
+#
+# ⚠ NOTHING WEARS THIS PROFILE YET. Rootless podman refuses AppArmor: from
+# inside its user namespace securityfs is not mounted, so `podman info` reports
+# AppArmor unavailable and `--security-opt apparmor=…` fails outright — and
+# containers/common rejects profiles in rootless mode regardless. Client stacks
+# are rootless by design (one Linux account per tenant), so this profile is
+# loaded, reviewable, and applied only when `client_apparmor: true` in
+# group_vars finds a runtime that can honour it. create-instance.yml checks and
+# refuses rather than deploying a stack that silently is not confined.
+#
+# Named profile, no attachment path: a container profile is applied by the
+# runtime, never matched by executable path.
+#
+# Paths below are CONTAINER paths — this profile describes the image's own
+# filesystem, not the host's.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile octbase-postgres flags=(attach_disconnected,mediate_deleted{{ ',complain' if item.mode == 'complain' else '' }}) {
+  include <abstractions/base>
+
+  # The image's entrypoint starts as root to fix ownership on the data
+  # directory and initialise the cluster, then drops to the postgres account.
+  capability chown,
+  capability dac_override,
+  capability dac_read_search,
+  capability fowner,
+  capability fsetid,
+  capability setgid,
+  capability setuid,
+  # Nothing else. Notably not sys_admin, sys_module, sys_ptrace, net_admin,
+  # net_raw or mknod — a database server needs none of them, and the default
+  # container capability set hands several of them out.
+  audit deny capability sys_admin,
+  audit deny capability sys_module,
+  audit deny capability sys_ptrace,
+  audit deny capability net_admin,
+  audit deny capability net_raw,
+  audit deny capability mknod,
+
+  # Listens on 5432 for the API over the compose network, and on its unix
+  # socket. No raw or packet sockets.
+  network inet stream,
+  network inet6 stream,
+  network unix stream,
+  network unix dgram,
+  network netlink raw,
+  audit deny network inet raw,
+  audit deny network inet6 raw,
+  audit deny network packet,
+
+  # Read the image; execute the entrypoint, the server, and the client tools
+  # the stack's own healthcheck and this repo's backups drive (pg_isready,
+  # pg_dump, psql, pg_restore — contract C7/C11).
+  /** r,
+  /{usr/,}bin/** ix,
+  /{usr/,}lib/postgresql/*/bin/** ix,
+
+  # Everything the server writes. The data directory is the bind-mounted
+  # pgdata on the host; the rest is runtime scratch.
+  /var/lib/postgresql/ rw,
+  /var/lib/postgresql/** rwkl,
+  /var/run/postgresql/ rw,
+  /var/run/postgresql/** rwkl,
+  /run/postgresql/ rw,
+  /run/postgresql/** rwkl,
+  /tmp/ rw,
+  /tmp/** rwkl,
+  /dev/shm/** rwk,
+  /docker-entrypoint-initdb.d/ r,
+
+  # …and nowhere else. A database that starts writing into its own image is
+  # either broken or being used as a foothold.
+  audit deny /etc/** w,
+  audit deny /usr/** w,
+  audit deny /bin/** w,
+  audit deny /lib/** w,
+  audit deny /root/** w,
+
+  deny @{PROC}/sys/** w,
+  deny /sys/** w,
+  audit deny mount,
+  audit deny umount,
+  audit deny pivot_root,
+  # A stack's containers may not inspect each other's memory. Only same-profile
+  # peers may, which is what lets postgres's own backend processes work — and
+  # everything not granted here is denied, so no blanket deny rule is needed
+  # (one would override this allow, since deny always wins).
+  ptrace (trace, read, tracedby, readby) peer=octbase-postgres,
+
+  include if exists <local/octbase-postgres>
+}

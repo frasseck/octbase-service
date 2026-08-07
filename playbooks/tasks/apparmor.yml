@@ -1,0 +1,183 @@
+---
+# Deploy and load the Octbase AppArmor policy on one host.
+#
+# Included by BOTH entry points, so there is one implementation and no way for
+# the two to drift:
+#
+#   setup-host.yml      — a new host gets the policy with the rest of its baseline
+#   install-apparmor.yml — an existing host gets ONLY this, without re-running
+#                          the baseline's SSH/firewall/account work
+#
+# The caller must load the profile catalogue:
+#
+#     vars_files:
+#       - vars/apparmor-profiles.yml
+#
+# and run with `become: true` (everything here is root work, except the runtime
+# probe, which deliberately is not).
+#
+# Facts this leaves behind for the caller's own summary:
+#   apparmor_ok              — the kernel has AppArmor on
+#   podman_apparmor_capable  — a ROOTLESS podman here would accept a profile
+#                              (practically always false; see the profile headers)
+#
+# Idempotent, and safe to run repeatedly on a live host: a profile is only
+# re-loaded when its file changed or the kernel does not hold it, and the edge
+# proxy is only restarted when its drop-in changed.
+
+- name: Check whether AppArmor is available on this host
+  ansible.builtin.slurp:
+    src: /sys/module/apparmor/parameters/enabled
+  register: apparmor_enabled
+  failed_when: false
+
+- name: Record the host's AppArmor state
+  ansible.builtin.set_fact:
+    apparmor_ok: "{{ (apparmor_enabled.content | default('') | b64decode | trim) == 'Y' }}"
+
+- name: AppArmor is not enabled on this kernel
+  ansible.builtin.debug:
+    msg: >-
+      /sys/module/apparmor/parameters/enabled does not read 'Y', so this host
+      cannot load the Octbase profiles. On Ubuntu that means AppArmor was
+      disabled on the kernel command line (apparmor=0 or
+      security=something-else) — undo that and re-run. Skipping the whole
+      AppArmor section; nothing else is affected.
+  when: not (apparmor_ok | bool)
+
+- name: Set up AppArmor policy
+  when: apparmor_ok | bool
+  block:
+    # Directly in /etc/apparmor.d/, not a subdirectory: apparmor_parser does not
+    # recurse, so the boot-time load (apparmor.service) only picks up regular
+    # files at the top level. A profile in /etc/apparmor.d/octbase/ would be
+    # loaded by this run and then quietly gone after a reboot.
+    #
+    # `validate` runs the parser in check-only mode BEFORE the file is put in
+    # place, so a broken profile can never reach a path the next boot will try
+    # to load.
+    #
+    # src is anchored to playbook_dir rather than left relative: this task file
+    # lives in tasks/, and the template search would otherwise depend on which
+    # directory Ansible resolves first.
+    - name: Install the Octbase AppArmor profiles
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/apparmor/{{ item.name }}.j2"
+        dest: "/etc/apparmor.d/{{ item.name }}"
+        mode: "0644"
+        validate: "apparmor_parser --skip-kernel-load --skip-cache %s"
+      loop: "{{ octbase_apparmor_profiles }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.mode }})"
+      register: apparmor_profile_files
+
+    # What the kernel currently holds, so a profile that was never loaded (first
+    # run) or was unloaded by hand is loaded again even when the file on disk is
+    # unchanged.
+    - name: Read the profiles currently loaded into the kernel
+      ansible.builtin.slurp:
+        src: /sys/kernel/security/apparmor/profiles
+      register: apparmor_loaded
+
+    # Kept as raw text ("<name> (enforce)" per line) and matched on "<name> ("
+    # rather than split into a list: a bare substring test would find
+    # 'octbase-web' inside 'octbase-web-mailer', and a templated list variable is
+    # a string in a non-native-Jinja Ansible, where `not in` would silently
+    # become that same substring test.
+    - name: Record which profiles the kernel already holds
+      ansible.builtin.set_fact:
+        apparmor_loaded_text: "{{ apparmor_loaded.content | default('') | b64decode }}"
+
+    - name: Load the Octbase AppArmor profiles
+      ansible.builtin.command: >-
+        apparmor_parser --replace --write-cache
+        /etc/apparmor.d/{{ item.item.name }}
+      loop: "{{ apparmor_profile_files.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when:
+        - item is changed or (item.item.name ~ ' (') not in apparmor_loaded_text
+      changed_when: true
+
+    # The profiles live in /etc/apparmor.d/, which this unit loads at boot.
+    # Without it they apply until the next reboot and then silently do not.
+    - name: Load AppArmor policy at boot
+      ansible.builtin.systemd_service:
+        name: apparmor
+        enabled: true
+        state: started
+
+    # The edge proxy is confined through its unit rather than by executable
+    # path — see the header of templates/apparmor/octbase-edge-caddy.j2: a path
+    # attachment on /usr/bin/caddy would also catch the caddy inside the
+    # frontend/mobile/marketing containers.
+    - name: Create the edge proxy's unit drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/caddy.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Confine the edge proxy with its profile
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/caddy.service.d/10-octbase-apparmor.conf
+        mode: "0644"
+        content: |
+          # {{ ansible_managed }}
+          [Service]
+          # The leading '-' makes a missing or unloadable profile non-fatal.
+          # A policy problem must not take the fleet's front door down with it.
+          AppArmorProfile=-octbase-edge-caddy
+      register: caddy_apparmor_dropin
+
+    # A drop-in only reaches the running daemon on a restart — `systemctl reload
+    # caddy` re-reads the Caddyfile without re-executing the process, so the
+    # confinement would not apply until the next reboot. Restarting drops
+    # in-flight connections for well under a second; the task only fires when the
+    # drop-in actually changed, so every later run leaves the edge alone.
+    - name: Restart the edge proxy under its profile
+      ansible.builtin.systemd_service:
+        name: caddy
+        daemon_reload: true
+        state: restarted
+      when: caddy_apparmor_dropin.changed
+
+# Reported rather than acted on: this is the honest answer to "are the container
+# profiles doing anything", and it is No on every rootless host. Run as the
+# CONNECTING account, without become, because that is the only rootless context
+# available here — `podman info` as root would answer for a runtime no client
+# stack uses. It initialises that account's container storage directories, which
+# is the one side effect.
+- name: Probe whether this host's container runtime can apply AppArmor
+  ansible.builtin.command: podman info --format json
+  become: false
+  register: podman_capability
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# `and` short-circuits, so a podman that could not answer at all (no rootless
+# setup for this account, say) never reaches from_json. The keys are walked with
+# .get() rather than dotted access: a dotted chain over a missing key raises
+# UndefinedError mid-expression, where a trailing `| default(false)` never gets
+# to catch it.
+- name: Record whether the container runtime could apply a profile
+  ansible.builtin.set_fact:
+    podman_apparmor_capable: "{{ (podman_capability.rc | default(1)) == 0 and (podman_capability.stdout | default('{}', true) | from_json).get('host', {}).get('security', {}).get('apparmorEnabled', false) | bool }}"
+
+- name: AppArmor policy on this host
+  ansible.builtin.debug:
+    msg: >-
+      {{
+        ([(octbase_apparmor_profiles | length) ~ ' profiles loaded into /etc/apparmor.d/.',
+          'Enforcing now: monitor-all.sh, backup-fleet.sh (by path) and caddy.service',
+          '  (unit drop-in) — the last one in ' ~ apparmor_mode_edge ~ ' mode.',
+          'Check what policy is actually rejecting:  journalctl -k | grep apparmor=',
+          'Loosen one while tuning:  -e apparmor_mode_platform=complain',
+          '',
+          'The six CONTAINER profiles are loaded and worn by nothing: this host\'s',
+          'podman reports AppArmorEnabled=' ~ (podman_apparmor_capable | lower) ~ ' for a rootless',
+          'runtime, and client stacks are rootless by design. Turning client_apparmor on',
+          'would make create-instance.yml refuse rather than deploy an unconfined stack.']
+         if apparmor_ok | bool else
+         ['⚠ AppArmor is NOT enabled on this kernel — no Octbase profile was loaded.'])
+      }}

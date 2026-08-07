@@ -1,0 +1,77 @@
+# {{ ansible_managed }}
+#
+# AppArmor profile for the CONTAINER `octbase-web` — the public marketing site
+# octbase.io (repo frasseck/octbase-web, Containerfile: Caddy serving a purely
+# static site). It runs under its own `oct-web` account, stood up by
+# scripts/setup-octbase-web.sh, on loopback port 8120.
+#
+# ⚠ NOTHING WEARS THIS PROFILE YET, and unlike the client containers there is
+# not even a flag for it: the marketing stack's compose file lives in the
+# octbase-web repo and carries no security_opt. The profile is deployed here
+# because AppArmor policy is host-level and this container runs on fleet hosts
+# — wiring it up is a change in that repo, once a runtime can honour it (see
+# octbase-postgres for why rootless podman cannot).
+#
+# The strictest of the six: no database, no upstream, no state. It reads a
+# static site and answers HTTP.
+#
+# Paths below are CONTAINER paths.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile octbase-web flags=(attach_disconnected,mediate_deleted{{ ',complain' if item.mode == 'complain' else '' }}) {
+  include <abstractions/base>
+
+  capability net_bind_service,
+  audit deny capability sys_admin,
+  audit deny capability sys_module,
+  audit deny capability sys_ptrace,
+  audit deny capability net_admin,
+  audit deny capability net_raw,
+  audit deny capability mknod,
+
+  # Inbound from the edge proxy; outbound to the mailer container for the
+  # contact form.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+  network unix stream,
+  network unix dgram,
+  audit deny network inet raw,
+  audit deny network inet6 raw,
+  audit deny network packet,
+
+  /{usr/,}bin/caddy mr,
+
+  /etc/caddy/ r,
+  /etc/caddy/** r,
+  /usr/share/caddy/ r,
+  /usr/share/caddy/** r,
+  /etc/{hosts,hostname,resolv.conf,nsswitch.conf,localtime,ssl/**} r,
+  @{PROC}/sys/net/core/somaxconn r,
+  owner @{PROC}/@{pid}/{cgroup,limits,maps,mountinfo,stat,status} r,
+  /sys/kernel/mm/transparent_hugepage/hpage_pmd_size r,
+
+  /data/ rw,
+  /data/** rwkl,
+  /config/ rw,
+  /config/** rwkl,
+  owner /tmp/** rwk,
+
+  audit deny /usr/share/caddy/** w,
+  audit deny /etc/** w,
+  audit deny /{usr,bin,sbin,lib,lib64,opt,root,srv}/** w,
+  audit deny /{bin,sbin,usr,lib,lib64,opt,srv,etc,tmp,var,run,home,root}/** x,
+
+  deny @{PROC}/sys/** w,
+  deny /sys/** w,
+  audit deny mount,
+  audit deny umount,
+  audit deny pivot_root,
+  ptrace (trace, read, tracedby, readby) peer=octbase-web,
+
+  include if exists <local/octbase-web>
+}

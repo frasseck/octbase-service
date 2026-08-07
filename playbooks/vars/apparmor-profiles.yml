@@ -1,0 +1,69 @@
+---
+# The AppArmor profiles this toolkit ships, deployed to every fleet host by
+# setup-host.yml. Each entry names a template in templates/apparmor/<name>.j2,
+# the file it becomes in /etc/apparmor.d/, and the mode it is loaded in.
+#
+# Two groups, and the difference between them matters:
+#
+#   ATTACHED — something on the host actually runs under the profile today.
+#     octbase-monitor and octbase-backup attach by executable path (the two
+#     root-run fleet scripts). octbase-edge-caddy is a NAMED profile applied by
+#     a systemd drop-in on caddy.service rather than by path, deliberately:
+#     a path attachment on /usr/bin/caddy would also catch the caddy INSIDE
+#     the frontend/mobile/web containers, whose filesystem has the same path.
+#
+#   UNATTACHED — the six container profiles. Rootless podman refuses to apply
+#     an AppArmor profile at all (it reports AppArmor as unavailable from
+#     inside its user namespace, and containers/common rejects profiles in
+#     rootless mode outright), so nothing wears these until client_apparmor is
+#     turned on AND the runtime can honour it. They are loaded anyway so that
+#     the policy is on the host, reviewable, and one flag away from being
+#     applied. See the README's "Container confinement" section.
+#
+# Modes come from group_vars (apparmor_mode_platform / _edge / _containers) so
+# a single run can drop everything to complain mode while a profile is being
+# tuned:  -e apparmor_mode_platform=complain
+octbase_apparmor_profiles:
+  # ── Host platform components — attached, enforcing ────────────────────────
+  - name: octbase-monitor
+    mode: "{{ apparmor_mode_platform }}"
+    attaches: /usr/local/lib/octbase/monitor-all.sh (by path)
+
+  - name: octbase-backup
+    mode: "{{ apparmor_mode_platform }}"
+    attaches: /usr/local/lib/octbase/backup-fleet.sh (by path)
+
+  # ── The public edge — attached via systemd, complain until exercised ──────
+  # Its failure mode is every client domain at once, and it is the one service
+  # here this repo does not own, so it observes before it enforces.
+  - name: octbase-edge-caddy
+    mode: "{{ apparmor_mode_edge }}"
+    attaches: caddy.service (systemd AppArmorProfile=)
+
+  # ── Client stack containers — loaded, nothing attaches them yet ───────────
+  - name: octbase-postgres
+    mode: "{{ apparmor_mode_containers }}"
+    attaches: client stacks, when client_apparmor is on
+
+  - name: octbase-api
+    mode: "{{ apparmor_mode_containers }}"
+    attaches: client stacks, when client_apparmor is on
+
+  - name: octbase-frontend
+    mode: "{{ apparmor_mode_containers }}"
+    attaches: client stacks, when client_apparmor is on
+
+  - name: octbase-mobile
+    mode: "{{ apparmor_mode_containers }}"
+    attaches: client stacks, when client_apparmor is on
+
+  # ── Marketing site containers (oct-web, scripts/setup-octbase-web.sh) ─────
+  # Deployed here because profiles are host-level; the web stack's compose file
+  # lives in the octbase-web repo and carries no security_opt yet.
+  - name: octbase-web
+    mode: "{{ apparmor_mode_containers }}"
+    attaches: nothing yet (octbase-web repo compose)
+
+  - name: octbase-web-mailer
+    mode: "{{ apparmor_mode_containers }}"
+    attaches: nothing yet (octbase-web repo compose)

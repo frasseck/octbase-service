@@ -1,0 +1,88 @@
+# {{ ansible_managed }}
+#
+# AppArmor profile for the CONTAINER `octbase-api` of an Octbase stack — the Go
+# API server (app repo octbase-api/Containerfile: a static CGO_ENABLED=0 binary
+# on ubi-micro, running as UID 10001).
+#
+# ⚠ NOTHING WEARS THIS PROFILE YET — see octbase-postgres for why (rootless
+# podman refuses AppArmor); it applies when `client_apparmor: true` finds a
+# runtime that can honour it.
+#
+# This image is the easiest of the four to confine tightly and the most
+# valuable to: it holds the JWT/SCM/MFA secrets and talks to the database, and
+# its runtime image has NO SHELL and no package manager at all. The profile
+# makes that architectural fact enforceable — the only executable in the
+# container is the API binary itself.
+#
+# Paths below are CONTAINER paths.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile octbase-api flags=(attach_disconnected,mediate_deleted{{ ',complain' if item.mode == 'complain' else '' }}) {
+  include <abstractions/base>
+
+  # None. The binary runs as UID 10001, binds 8000 (above 1024) and owns
+  # nothing it did not create — it needs no capability whatsoever, and saying
+  # so is most of the value of this profile.
+  audit deny capability,
+
+  # Postgres on the compose network, SMTP to the platform relay, HTTPS out to
+  # GitHub/GitLab/Bitbucket for SCM, and the DNS that precedes all three.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+  network unix stream,
+  network unix dgram,
+  audit deny network inet raw,
+  audit deny network inet6 raw,
+  audit deny network packet,
+
+  # The binary, and the read-only trees the image ships beside it: the
+  # migrations, the OpenAPI spec and the served web assets, plus the CA bundle
+  # the static binary needs for outbound TLS.
+  /octbase-api mr,
+  /migrations/ r,
+  /migrations/** r,
+  /api/ r,
+  /api/** r,
+  /web/ r,
+  /web/** r,
+  /etc/pki/** r,
+  /etc/{hosts,hostname,resolv.conf,nsswitch.conf,localtime,ssl/**} r,
+  @{PROC}/sys/net/core/somaxconn r,
+  owner @{PROC}/@{pid}/{cgroup,limits,maps,mountinfo,stat,status} r,
+  /sys/kernel/mm/transparent_hugepage/hpage_pmd_size r,
+
+  # Uploaded attachments — the API's only durable state besides Postgres, and
+  # a bind mount from the client's home directory.
+  /data/ r,
+  /data/attachments/ rw,
+  /data/attachments/** rwkl,
+  owner /tmp/** rwk,
+
+  # Nothing else is writable — AppArmor denies what it was not granted, so the
+  # two rules above are the complete write surface; these denies only add an
+  # audit line when something tries. (A blanket `deny /** w` would be wrong
+  # here: deny beats allow, so it would also kill the attachments mount.)
+  audit deny /{etc,usr,bin,sbin,lib,lib64,opt,root,srv,migrations,api,web}/** w,
+  audit deny /octbase-api w,
+
+  # And — the point of this profile — nothing at all is executable. ubi-micro
+  # ships no shell and no package manager, so anything trying to run one has
+  # brought it along.
+  audit deny /{bin,sbin,usr,lib,lib64,opt,srv,etc}/** x,
+  audit deny /{tmp,data,var,run,dev,home,root}/** x,
+  audit deny /etc/{shadow,gshadow,passwd-,shadow-} r,
+
+  deny @{PROC}/sys/** w,
+  deny /sys/** w,
+  audit deny mount,
+  audit deny umount,
+  audit deny pivot_root,
+  ptrace (trace, read, tracedby, readby) peer=octbase-api,
+
+  include if exists <local/octbase-api>
+}
