@@ -24,7 +24,7 @@ machine, with one git-versioned ledger as the single source of truth:
 ```
 
 Every instance is pinned to exactly one host by its ledger entry
-(`host: prod`). Every per-client playbook scopes itself to that host and is a
+(`host: prod01`). Every per-client playbook scopes itself to that host and is a
 no-op everywhere else, so a fleet-wide rollout is still just "run the
 playbook per active client" regardless of where each client lives.
 
@@ -93,7 +93,7 @@ driven by the same per-host client registry the monitor uses
 
 | Action | Tool |
 |---|---|
-| Onboard | `ledger.py new` → `create-instance.yml` |
+| Onboard | `ledger.py new` → `create-instance.yml` (or `create-instance.yml` alone — it asks for the entry and scaffolds it) |
 | Reconfigure (edition/seats/version/resources/quota) | edit ledger → `create-instance.yml` (or `set-resources.yml` / `set-max-users.yml` / `set-version.yml` for a single knob) |
 | Code update | `sync-instance.yml` (branch) or `create-instance.yml` (working tree) |
 | Suspend / resume | `suspend-instance.yml` (status: suspended) / set `status: active` + `create-instance.yml` |

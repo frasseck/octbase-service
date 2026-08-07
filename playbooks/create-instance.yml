@@ -7,6 +7,233 @@
 # the ledger-managed settings (edition, add-on, seats, version) and restarts
 # the stack only if something changed. Secrets and data are never touched
 # after the first run.
+#
+# A client with NO ledger entry is not an error any more: the first play below
+# interviews the operator and scaffolds the entry before anything is
+# provisioned. See its header for what that dialog does and does not do.
+
+# ── Ledger entry ─────────────────────────────────────────────────────────
+# The ledger is the single source of truth and every play below reads it, so
+# onboarding used to be two commands with a hand-off in between: `ledger.py
+# new …` with eight flags to get right, then this playbook. Getting a flag
+# wrong was only visible one command later, as an assert failure.
+#
+# This play closes that gap. It runs on the ADMIN machine (the ledger lives in
+# this repo, not on any server) and:
+#   - does nothing at all when ledger/clients/<client>.yml already exists —
+#     which is the normal case, and the case the migrate playbooks hit, since
+#     migrate-instance.yml and migrate-host.yml import this file
+#     (`import_playbook`) for clients that are by definition already in the
+#     ledger;
+#   - otherwise asks for every field, then hands the answers to
+#     `ledger/ledger.py new`.
+#
+# It deliberately does NOT reimplement the ledger schema. Name shape, reserved
+# names, editions, the add-on rule, host validity, the date stamp and above all
+# the port allocation all stay in ledger.py, which is the one place that can
+# see every other client's ports (contracts C3/C8/C10 — docs/consistency-register.md).
+# This play only collects answers and reports what the CLI decided.
+#
+# Prompts are `pause`, not `vars_prompt`, on purpose: vars_prompt fires before
+# any task can look at the filesystem, so it would interrogate the operator on
+# every run of an existing client — including inside the migrate playbooks.
+# The cost is that this path needs a terminal; a scripted onboarding runs
+# `./ledger/ledger.py new …` first and then this playbook, exactly as before.
+- name: Ensure the client has a ledger entry
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  vars:
+    ledger_py: "{{ playbook_dir }}/../ledger/ledger.py"
+    ledger_entry_file: "{{ playbook_dir }}/../ledger/clients/{{ client | default('') }}.yml"
+
+  tasks:
+    # Asserted here rather than in the play below, which used to discover it as
+    # an include_vars failure on a path with an empty name in it.
+    - name: A client name is required
+      ansible.builtin.assert:
+        that:
+          - client is defined
+          - client | length > 0
+        fail_msg: >-
+          Name the client with -e client=<name>. It is the ledger file name,
+          the subdomain label and the Linux account suffix.
+        quiet: true
+
+    - name: Look for the client's ledger entry
+      ansible.builtin.stat:
+        path: "{{ ledger_entry_file }}"
+      register: ledger_entry
+
+    - name: Onboard a client that is not in the ledger yet
+      when: not ledger_entry.stat.exists
+      block:
+        # The dialog cannot run without a terminal, and --check must not create
+        # a ledger file — it is a repo change, not a host change, so a dry run
+        # that wrote one would leave a real artefact behind.
+        - name: A new client cannot be onboarded in check mode
+          ansible.builtin.assert:
+            that: not ansible_check_mode
+            fail_msg: >-
+              '{{ client }}' has no ledger entry
+              ({{ ledger_entry_file }}), and creating one asks questions and
+              writes a file — neither of which belongs in a --check run. Create
+              the entry first with ./ledger/ledger.py new {{ client }} …, or
+              re-run without --check to be asked.
+            quiet: true
+
+        - name: Announce the onboarding dialog
+          ansible.builtin.debug:
+            msg:
+              - "'{{ client }}' is not in the ledger — scaffolding its entry."
+              - "Answers go to ./ledger/ledger.py new, which allocates the port"
+              - "block and validates the rest. Nothing is provisioned until the"
+              - "entry exists, and nothing is committed for you."
+              - "Ctrl-C then A aborts without writing anything."
+
+        - name: Display name
+          ansible.builtin.pause:
+            prompt: >-
+              Display name (the company, as it should read in the client table)
+              [default: {{ client }}]
+          register: ask_display
+
+        - name: Contact email
+          ansible.builtin.pause:
+            prompt: >-
+              Contact email. This also becomes the login of the instance's
+              first SUPER_ADMIN — the only way into a fresh stack — so it must
+              be a real mailbox that can receive a password reset
+          register: ask_contact
+
+        # Checked at the prompt rather than left to ledger.py, which would only
+        # reject it after every remaining question had been answered and thrown
+        # away. Same shape check as the assert further down this playbook and as
+        # ledger.py's EMAIL_RE: it catches "", "tbd" and "lars at beyags.com",
+        # which is what actually goes wrong. Nothing offline proves deliverability.
+        - name: The contact must look like an email address
+          ansible.builtin.assert:
+            that: ask_contact.user_input | trim is match('^[^@\s]+@[^@\s]+\.[^@\s]+$')
+            fail_msg: >-
+              '{{ ask_contact.user_input | trim }}' is not an email address.
+              Re-run and give the mailbox the client's first administrator will
+              log in with.
+            quiet: true
+
+        - name: Edition
+          ansible.builtin.pause:
+            prompt: "Edition — team | business | enterprise"
+          register: ask_edition
+
+        - name: The edition must be one of the three booked products
+          ansible.builtin.assert:
+            that: ask_edition.user_input | trim | lower in ['team', 'business', 'enterprise']
+            fail_msg: >-
+              '{{ ask_edition.user_input | trim }}' is not an edition. Expected
+              team, business or enterprise.
+            quiet: true
+
+        # The add-on is booked by default and team can never have it, which is
+        # ledger.py's rule — so an empty answer omits the flag entirely and lets
+        # the CLI apply it, rather than this play deciding it a second time.
+        - name: Jira-CSV-import add-on
+          ansible.builtin.pause:
+            prompt: >-
+              Book the Jira-CSV-import add-on? yes / no
+              [empty: booked, except the team edition, which can never have it]
+          register: ask_jira
+
+        - name: Licensed seats
+          ansible.builtin.pause:
+            prompt: "Licensed seats (OCTBASE_MAX_USERS) [default: 25]"
+          register: ask_seats
+
+        # Empty omits --host so ledger.py applies default_client_host from
+        # group_vars, and prints which host that resolved to.
+        - name: Placement
+          ansible.builtin.pause:
+            prompt: >-
+              Inventory host to place this instance on —
+              {{ groups['octbase_hosts'] | join(' | ') }}
+              [empty: the platform default]
+          register: ask_host
+
+        - name: Disk quota
+          ansible.builtin.pause:
+            prompt: "Disk quota for the whole client account, in GB [default: 10]"
+          register: ask_disk
+
+        # Selects the app repo tag AND stamps OCTBASE_APP_VERSION (C4), so the
+        # code and the version a client reports cannot drift apart. Empty falls
+        # back to octbase_version from group_vars.
+        - name: App version
+          ansible.builtin.pause:
+            prompt: >-
+              App version to pin this client to, e.g. 1.0.1
+              [empty: the platform default from group_vars]
+          register: ask_version
+
+        - name: Scaffold the ledger entry
+          ansible.builtin.command:
+            argv: "{{ ledger_new_argv }}"
+          vars:
+            ledger_new_argv: >-
+              {{ [ledger_py, 'new', client,
+                  '--contact', ask_contact.user_input | trim,
+                  '--edition', ask_edition.user_input | trim | lower]
+                 + (['--display', ask_display.user_input | trim]
+                    if ask_display.user_input | trim else [])
+                 + (['--jira-import']
+                    if ask_jira.user_input | trim | lower in ['y', 'yes'] else [])
+                 + (['--no-jira-import']
+                    if ask_jira.user_input | trim | lower in ['n', 'no'] else [])
+                 + (['--max-users', ask_seats.user_input | trim]
+                    if ask_seats.user_input | trim else [])
+                 + (['--host', ask_host.user_input | trim]
+                    if ask_host.user_input | trim else [])
+                 + (['--disk-quota-gb', ask_disk.user_input | trim]
+                    if ask_disk.user_input | trim else [])
+                 + (['--app-version', ask_version.user_input | trim]
+                    if ask_version.user_input | trim else []) }}
+          register: ledger_new
+          changed_when: true
+
+        # The CLI reports the host it resolved and the port block it allocated
+        # — the two answers the operator did not give it.
+        - name: What the ledger CLI decided
+          ansible.builtin.debug:
+            msg: "{{ ledger_new.stdout_lines }}"
+
+        # The repo-wide check, not just this file: allocation is only correct
+        # relative to every other entry, and this is the same command the
+        # README requires before committing any ledger change.
+        - name: Validate the whole ledger
+          ansible.builtin.command:
+            argv: ["{{ ledger_py }}", validate]
+          register: ledger_validate
+          changed_when: false
+
+        - name: The new entry is not committed yet
+          ansible.builtin.debug:
+            msg:
+              - "{{ ledger_validate.stdout | trim }}"
+              - ""
+              - "⚠ {{ ledger_entry_file | basename }} is written but UNCOMMITTED."
+              - "  The git history of ledger/clients/ is the audit trail of the"
+              - "  client base — commit it, ideally before the provisioning below"
+              - "  changes anything on the host:"
+              - "    git add ledger/clients/{{ client }}.yml && git commit"
+              - ""
+              - "Provisioning continues now. DNS for the instance is still manual"
+              - "— see the follow-up steps printed at the end of this run."
+
+    - name: Ledger entry in use
+      ansible.builtin.debug:
+        msg: "{{ client }}: using existing ledger entry {{ ledger_entry_file }}"
+      when: ledger_entry.stat.exists
+
 - name: Create / update Octbase client instance
   hosts: octbase_hosts
   become: true

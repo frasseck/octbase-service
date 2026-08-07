@@ -39,6 +39,13 @@ git add ledger/clients/acme.yml && git commit -m "ledger: onboard acme"
 ansible-playbook playbooks/create-instance.yml -e client=acme
 ```
 
+`create-instance.yml` also onboards on its own: run it for a client with no
+ledger entry and its first play asks for every field, then calls the same
+`ledger.py new` and validates the ledger before provisioning. Use it for an
+interactive onboarding; use the form above when scripting, and when you already
+know the answers. The entry is written **uncommitted** either way — commit it.
+The dialog needs a terminal and refuses to run under `--check`.
+
 Constraints encoded in `ledger.py` (don't work around them): name =
 `^[a-z][a-z0-9-]{1,27}$`, not in the reserved set (`www dev mail api
 octbase admin` — `demo` is a ledger-managed instance since 2026-07-11);

@@ -126,7 +126,7 @@ max_users: 25              # → OCTBASE_MAX_USERS
 registered: 2026-07-10
 status: active             # active | suspended | removed
 app_version: "1.0.1"       # deploys app repo tag v1.0.1 AND stamps it
-host: prod                 # inventory host the instance runs on
+host: prod01               # inventory host the instance runs on
 disk_quota_gb: 10          # account disk quota (enforced where fs allows, always monitored)
 resources:                 # optional — account caps (systemd user slice);
   memory_max: 4G           #   omitted keys use client_default_resources
@@ -164,6 +164,21 @@ git add ledger/clients/acme.yml && git commit -m "ledger: onboard acme"
 
 ansible-playbook playbooks/create-instance.yml -e client=acme
 ```
+
+Or let the playbook ask. Run it for a client that has **no** ledger entry and
+its first play interviews you — display name, contact, edition, add-on, seats,
+host, disk quota, app version — then calls the same `ledger.py new` with your
+answers and validates the whole ledger before provisioning anything:
+
+```bash
+ansible-playbook playbooks/create-instance.yml -e client=acme
+```
+
+The host question offers the names in `inventory/hosts.yml`; an empty answer
+takes `default_client_host`. Either way the entry is written but **not
+committed** — the git history of `ledger/clients/` is the audit trail of the
+client base, so commit it yourself. The dialog needs a terminal and is refused
+under `--check`; a scripted onboarding uses the two-command form above.
 
 The playbook then prints the two **manual** steps:
 1. **DNS**: create `acme.octbase.io` → A/AAAA record for the production host.
@@ -495,7 +510,7 @@ enables the firewall, configures per-account disk quotas in `fstab`, creates
 `/etc/octbase/{edge,clients.d}` and lays down the edge Caddyfile with the
 `import /etc/octbase/edge/*.caddy` line client vhosts rely on. It is
 idempotent, so it also serves as "bring a hand-built host up to the current
-baseline" — including `prod`.
+baseline" — including `prod01` and `dev01`.
 
 Naming the target is mandatory (`-e target_host=`): the play restarts SSH and
 enables the firewall, and an unscoped run would do that to every host at once.
@@ -510,7 +525,7 @@ Two things to know before the first run:
   `fstab`; the quota package's boot-time `quotacheck` is what makes the
   numbers true, so enforcement starts after a restart. Until then
   `create-instance.yml` warns that usage is monitored but not enforced —
-  which is the state `prod` is in today.
+  which is the state both hosts are in today.
 
 Then place clients on it via `host: prod2` in their ledger entries.
 
@@ -526,13 +541,13 @@ client's, so it prints the target it resolved — client, host, `ansible_host`,
 port, account — before it changes anything, and **fails** if the ledger's
 `host:` is not a name in the inventory. That check exists because without it
 the mismatch ends the play everywhere and the run reports success having
-touched nothing (OCT-48). To move client `acme` from `prod` to `prod2`:
+touched nothing (OCT-48). To move client `acme` from `dev01` to `prod01`:
 
 ```bash
-# 1) edit ledger/clients/acme.yml → host: prod2, validate, commit
+# 1) edit ledger/clients/acme.yml → host: prod01, validate, commit
 # 2) octbase_src must be at the client's release (schema ≥ the source's)
 ansible-playbook playbooks/migrate-host.yml \
-    -e client=acme -e source_host=prod -e confirm=acme
+    -e client=acme -e source_host=dev01 -e confirm=acme
 ```
 
 The playbook freezes and dumps the source, stages DB + attachments + `.env`

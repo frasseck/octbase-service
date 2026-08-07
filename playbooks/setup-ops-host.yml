@@ -1,0 +1,189 @@
+---
+# The development server's delta on top of the fleet-host baseline.
+#
+#   ansible-playbook playbooks/setup-ops-host.yml -e target_host=dev01
+#
+# dev01 is a standard fleet host that additionally carries the `claude`
+# development account. Everything that makes it a fleet host —  packages,
+# sshd, firewall, fail2ban, quotas, the edge Caddy, /etc/octbase — is
+# setup-host.yml's, and is NOT repeated here. This playbook only adds what the
+# baseline has no reason to know about, which is why it is a delta and not a
+# second provisioner: one baseline, one place to change it.
+#
+# RUN ORDER — the baseline first, this second:
+#
+#   ansible-playbook playbooks/setup-host.yml -e target_host=dev01 \
+#       -e setup_user=<account> -e admin_users='lfrasseck claude' \
+#       -e install_workstation_extras=true -e host_fqdn=dev01.octbase.io
+#   ansible-playbook playbooks/setup-ops-host.yml -e target_host=dev01
+#
+# The baseline run is what CREATES the account: `claude` is passed as an admin
+# user, so it gets its uid, home, /bin/bash, the sudo group, a passwordless
+# sudoers drop-in, the connecting operator's SSH key and an AllowUsers entry —
+# and `install_workstation_extras=true` is what gives the host the browser, Go,
+# Node and gh toolchain the account is for. This playbook asserts that already
+# happened rather than doing any of it a second time, so the account has one
+# owner and a later baseline re-run cannot fight it.
+#
+# What it does NOT do, on purpose:
+#   - create the account, or manage its key, sudo or SSH access — the baseline
+#   - check out any repository. The target host deliberately never talks to
+#     GitHub: deploys rsync from the admin machine (group_vars: octbase_repo,
+#     octbase_git_cache). A checkout here would make the server a git client.
+#   - install Claude Code, or bring up any development stack. Those are a
+#     human's first login, and their .env lives in ~/credentials on the box —
+#     it must never enter this repo.
+#   - place or provision any client. dev01 takes ledger clients like any other
+#     host; that is create-instance.yml, driven by the ledger.
+#
+# Idempotent: safe to re-run against an already-configured dev01.
+
+# ── Guard ────────────────────────────────────────────────────────────────
+# Same reasoning as setup-host.yml: an unscoped `hosts: octbase_hosts` would
+# apply the development account to every server in the fleet, which is the one
+# thing that separates dev01 from prod01. Naming the target is mandatory.
+- name: Check the target host was named
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: A target host is required
+      ansible.builtin.assert:
+        that:
+          - target_host is defined
+          - target_host in groups['octbase_hosts']
+        fail_msg: >-
+          Name the host with -e target_host=<name>, where <name> is an entry in
+          inventory/hosts.yml
+          (currently: {{ groups['octbase_hosts'] | default([]) | join(', ') }}).
+        quiet: true
+
+- name: Add the development account to a fleet host
+  hosts: "{{ target_host }}"
+  become: true
+
+  vars:
+    # The development account. Named once so the tasks below read as what they
+    # are; it is created by setup-host.yml's admin_users, not here.
+    dev_account: claude
+
+  tasks:
+    # ── The baseline must have run first ─────────────────────────────────
+    # Without this the playbook would half-provision a stock server: linger on
+    # an account that has no SSH access, on a host with no firewall and no
+    # /etc/octbase. Failing with the command line to run is more useful than
+    # succeeding into that state.
+    - name: Look for the fleet-host baseline
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/octbase
+        - /etc/ssh/sshd_config.d/10-octbase.conf
+      register: baseline_marks
+
+    - name: The fleet-host baseline must be in place
+      ansible.builtin.assert:
+        that: baseline_marks.results | rejectattr('stat.exists') | list | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} is missing
+          {{ baseline_marks.results | rejectattr('stat.exists')
+             | map(attribute='item') | join(' and ') }}, so setup-host.yml has
+          not provisioned it. This playbook only adds the '{{ dev_account }}'
+          account on top of that baseline. Run it first:
+            ansible-playbook playbooks/setup-host.yml -e target_host={{ target_host }}
+            -e admin_users='lfrasseck {{ dev_account }}'
+            -e install_workstation_extras=true
+        quiet: true
+
+    # ── The account itself ───────────────────────────────────────────────
+    # Asserted, never created. setup-host.yml owns it (admin_users), including
+    # its key, its sudoers drop-in and its place in sshd's AllowUsers — and
+    # that AllowUsers list is rebuilt from admin_users on every baseline run.
+    # So an account created here instead would lose its SSH access the next
+    # time the baseline ran, silently, on a host nobody was watching.
+    - name: Read the host's account database
+      ansible.builtin.getent:
+        database: passwd
+
+    - name: The development account must already exist
+      ansible.builtin.assert:
+        that: dev_account in ansible_facts['getent_passwd']
+        fail_msg: >-
+          There is no '{{ dev_account }}' account on {{ inventory_hostname }}.
+          It is created by the baseline, not here, so that one playbook owns its
+          key, sudo and SSH allow-list entry. Re-run setup-host.yml with the
+          account in admin_users:
+            ansible-playbook playbooks/setup-host.yml -e target_host={{ target_host }}
+            -e admin_users='lfrasseck {{ dev_account }}'
+            -e install_workstation_extras=true
+        quiet: true
+
+    # ── Linger ───────────────────────────────────────────────────────────
+    # Without linger the account's systemd user instance is torn down at
+    # logout, taking every rootless container with it, and nothing starts at
+    # boot. Client accounts get this from create-instance.yml; this account has
+    # no ledger entry, so it gets it here.
+    - name: Keep the account's systemd user instance running
+      ansible.builtin.command: loginctl enable-linger {{ dev_account }}
+      args:
+        creates: "/var/lib/systemd/linger/{{ dev_account }}"
+
+    # ── Rootless podman prerequisites ────────────────────────────────────
+    # The packages come with the baseline; what is account-specific is the
+    # subordinate id range, without which rootless podman fails at first run
+    # with an id-mapping error that reads like a container problem.
+    #
+    # Normally useradd allocates this when the baseline creates the account, so
+    # the check below passes untouched. It is deliberately a CHECK and not a
+    # fix: picking a range means picking numbers that must not overlap any
+    # other account's, and an overlap silently gives two accounts the same
+    # namespace ids. shadow-utils allocates correctly and this playbook does
+    # not second-guess it — it says which command to run instead.
+    - name: Look for the account's subordinate id ranges
+      ansible.builtin.command:
+        argv: [grep, -q, "^{{ dev_account }}:", "{{ item }}"]
+      loop:
+        - /etc/subuid
+        - /etc/subgid
+      register: subid_present
+      changed_when: false
+      # grep exits 1 for "no match", which is an answer here, not a failure —
+      # the assert below is what turns it into one.
+      failed_when: false
+
+    - name: The account needs a subordinate id range for rootless podman
+      ansible.builtin.assert:
+        that: subid_present.results | selectattr('rc', 'ne', 0) | list | length == 0
+        fail_msg: >-
+          '{{ dev_account }}' has no entry in
+          {{ subid_present.results | selectattr('rc', 'ne', 0)
+             | map(attribute='item') | join(' or ') }}, so rootless podman
+          cannot map ids for it. Allocate a range on the host — shadow-utils
+          picks non-overlapping numbers, this playbook will not guess them:
+            sudo usermod --add-subuids <first>-<last>
+            --add-subgids <first>-<last> {{ dev_account }}
+          Check the existing entries first; ranges must not overlap. Then re-run.
+        quiet: true
+
+    # ── What is left for the operator ────────────────────────────────────
+    - name: Next steps
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            [inventory_hostname ~ ' carries the ' ~ dev_account ~ ' development account.',
+             '',
+             'The account is a workstation, not a managed deployment: repositories,',
+             'tooling and any development stack are set up at first login, by hand.',
+             'Nothing in this repo checks code out onto a server.',
+             '',
+             '  ssh -p ' ~ (ansible_port | default(22, true)) ~ ' ' ~ dev_account
+               ~ '@' ~ (ansible_host | default(inventory_hostname, true)),
+             '',
+             'As a fleet host it is finished by the same two playbooks as any other:',
+             '  ansible-playbook playbooks/install-monitoring.yml',
+             '  ansible-playbook playbooks/install-backup.yml',
+             '',
+             'Clients are placed here with host: ' ~ inventory_hostname ~ ' in their',
+             'ledger entry — or by answering create-instance.yml\'s ledger dialog.']
+          }}

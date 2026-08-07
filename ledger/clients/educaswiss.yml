@@ -7,7 +7,7 @@ max_users: 10
 registered: '2026-07-16'
 status: removed
 app_version: '1.0.1'
-host: prod
+host: prod01
 disk_quota_gb: 10
 ports:
   frontend: 8140

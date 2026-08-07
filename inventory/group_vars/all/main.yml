@@ -19,7 +19,12 @@ base_domain: octbase.io
 # Inventory host a client runs on when its ledger entry has no `host:` field
 # (must be a name from inventory/hosts.yml). Per-client playbooks scope
 # themselves to the client's host and no-op on every other one.
-default_client_host: prod
+#
+# prod01, not dev01: new clients belong on the pure fleet server. dev01 also
+# takes ledger clients, but placing one there is a decision the operator makes
+# explicitly — in the ledger entry, or by answering create-instance.yml's
+# ledger dialog. Renamed from `prod` on 2026-08-07 with the prod01/dev01 split.
+default_client_host: prod01
 
 # Path ON THE ADMIN MACHINE to a checkout of the app repo
 # (frasseck/octbase-app.git) at the release you want to deploy. The create
