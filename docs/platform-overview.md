@@ -36,8 +36,10 @@ Since 2026-07-11 only the **dev** stack still runs under the `claude`
 account: the public demo was migrated into its own `oct-demo` account as the
 first ledger-managed instance (`ledger/clients/demo.yml`, ports 8110–8112,
 via `migrate-instance.yml`), and the marketing site moved to the `oct-web`
-account on loopback port 8120 (`scripts/migrate-octbase-web.sh`; 8120 is
-reserved in `ledger.py` so it is never allocated to a client).
+account on loopback port 8120 (8120 is reserved in `ledger.py` so it is never
+allocated to a client). `scripts/setup-octbase-web.sh` is how that site is
+stood up on a host today — it creates the account, deploys the stack and drops
+the edge vhost snippet.
 
 | Stack | Account | Compose project | systemd unit (user) | Host ports |
 |---|---|---|---|---|
@@ -50,9 +52,29 @@ reserved in `ledger.py` so it is never allocated to a client).
 ¹ The `oct-web` account still carries the **pre-rename** names — compose project
 `ocete`, unit `ocete-web.service`, directory `~oct-web/ocete.ch` and
 `.env.ocete`. The 2026-08-06 domain rename covered the `claude` account's
-staging copy (now `~/octbase.io`, project `octbase-web`) but not that account,
+staging copy (now `~/octbase-web`, project `octbase-web`) but not that account,
 which needs root. Do not "correct" this row until the rename has actually been
-carried out there; see the header of `scripts/migrate-octbase-web.sh`.
+carried out there.
+
+**Carrying it out.** `scripts/setup-octbase-web.sh` deploys under the *new*
+names (`~oct-web/octbase.io`, `.env.octbase-web`, `octbase-web.service`), so
+running it against this box without cleaning up first would leave the old unit
+enabled alongside the new one — two units driving the same stack on the same
+port. Retire the old one first, as root:
+
+```bash
+runuser -u oct-web -- env XDG_RUNTIME_DIR=/run/user/$(id -u oct-web) \
+    systemctl --user disable --now ocete-web.service
+rm -f ~oct-web/.config/systemd/user/ocete-web.service
+# keep the secrets: the new script reads ~oct-web/credentials/.env.octbase-web
+cp -a ~oct-web/credentials/.env.ocete ~oct-web/credentials/.env.octbase-web
+rm -rf ~oct-web/ocete.ch ~oct-web/credentials/.env.ocete
+```
+
+then run the setup script and update this row. Note the edge currently serves
+`octbase.io` from a block **inside** `/etc/caddy/Caddyfile`, not from a
+snippet; the script refuses to run until that inline block is removed, rather
+than creating a duplicate vhost Caddy would reject.
 
 Also on the host: `~/restart.sh` (stale since the migrations: it still
 rebuilds `~/octbase.io` — no longer the public site — and `cd`s into the
@@ -171,7 +193,7 @@ descriptions. Product naming was already `octbase-*` and did not move.
   existed under the new name, so renaming the references would fabricate a path.
 - **`~oct-web/`'s copies** — that account still holds `ocete.ch/`,
   `.env.ocete` and `ocete-web.service` from the pre-rename migration. Renaming
-  them needs root; `scripts/migrate-octbase-web.sh` documents the cleanup.
+  them needs root; §2's footnote ¹ documents the cleanup.
 
 So a bare `grep -r ocete` is expected to return hits. Read the context before
 "fixing" one — each remaining hit is one of the three cases above.

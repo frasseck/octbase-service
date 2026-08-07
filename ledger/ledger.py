@@ -58,7 +58,7 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # dev/demo ports (8025/8026 were their Mailpit UIs) — kept, since they cost
 # nothing and an old stack could still be revived on them.
 #
-# 8120 is the oct-web marketing site (scripts/migrate-octbase-web.sh); it sits
+# 8120 is the oct-web marketing site (scripts/setup-octbase-web.sh); it sits
 # *inside* the client allocation range, which is why it has to be listed.
 # 8110-8112 and 8130-8132 are NOT here on purpose: demo and beyags are ledger
 # clients, so taken_ports() picks their blocks up from the ledger itself.
