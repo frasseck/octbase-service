@@ -160,13 +160,19 @@ def cmd_new(args):
     path = CLIENTS_DIR / f"{args.name}.yml"
     if path.exists():
         sys.exit(f"{path} already exists")
-    # The add-on is booked by default; team can never have it, so the default
-    # backs off there and only an explicit --jira-import is an error.
+    # Booked by default on EVERY edition since 2026-08-07 (Lars: the Jira import
+    # is part of all subscriptions). There is therefore no edition the default
+    # backs off for, and no combination to refuse.
+    #
+    # ⚠ The running app does NOT yet agree: jiraImportEnabled() in the API
+    # returns false for TEAM whatever OCTBASE_OPTION_JIRA_IMPORT says, logs a
+    # warning, answers the import endpoint with 403 FEATURE_DISABLED and hides
+    # the SPA menu entry. So a team client scaffolded here books something it
+    # will not receive until the app repo follows. Tracked as drift under the
+    # register's C3 — do not "fix" this back without checking there first.
     jira_import = args.jira_import
     if jira_import is None:
-        jira_import = args.edition != "team"
-    elif jira_import and args.edition == "team":
-        sys.exit("the jira_import add-on cannot be booked for the team edition")
+        jira_import = True
     host = args.host or default_host()
     known_hosts = inventory_hosts()
     if known_hosts and host not in known_hosts:
@@ -264,8 +270,8 @@ def cmd_validate(_args):
             errors.append(f"{where}: max_users must be a positive integer")
         if not isinstance(c.get("jira_import"), bool):
             errors.append(f"{where}: jira_import must be true or false")
-        if c.get("jira_import") and c.get("edition") == "team":
-            errors.append(f"{where}: the jira_import add-on cannot be booked for team")
+        # No edition check: the add-on is part of every subscription since
+        # 2026-08-07. The app's own TEAM gate is tracked as drift under C3.
         if "monitor_edge_probe" in c and not isinstance(c["monitor_edge_probe"], bool):
             errors.append(f"{where}: monitor_edge_probe must be true or false")
         host = c.get("host", dflt_host)

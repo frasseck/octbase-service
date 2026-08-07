@@ -142,7 +142,7 @@ name: acme                 # → acme.octbase.io, Linux user oct-acme
 display_name: ACME GmbH
 contact: it@acme.example   # also the login of the first SUPER_ADMIN (see below)
 edition: business          # team | business | enterprise
-jira_import: true          # add-on, booked by default; only honored for business
+jira_import: true          # add-on, booked by default on every edition (see C3)
 max_users: 25              # → OCTBASE_MAX_USERS
 registered: 2026-07-10
 status: active             # active | suspended | removed

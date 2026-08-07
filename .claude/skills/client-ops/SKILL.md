@@ -49,9 +49,11 @@ The dialog needs a terminal and refuses to run under `--check`.
 Constraints encoded in `ledger.py` (don't work around them): name =
 `^[a-z][a-z0-9-]{1,27}$`, not in the reserved set (`www dev mail api
 octbase admin` — `demo` is a ledger-managed instance since 2026-07-11);
-`jira_import` booked by default (`--no-jira-import` to opt out), only
-bookable on `business` (included in enterprise, never on team — there the
-scaffold defaults it to false); ports auto-allocated from 8110 in blocks of 10.
+`jira_import` booked by default on every edition since 2026-08-07
+(`--no-jira-import` to opt out) — but the running app still refuses the import
+on `team` (403, menu hidden), so a team client books what it does not yet get;
+that gap is tracked as drift under C3. Ports auto-allocated from 8110 in
+blocks of 10.
 
 Then two **manual** steps the playbook prints: DNS A/AAAA record for
 `acme.octbase.io`, and including the generated edge snippet

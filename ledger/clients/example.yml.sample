@@ -17,10 +17,13 @@ contact: it@acme.example
 
 # Booked product: team | business | enterprise (→ OCTBASE_EDITION).
 edition: business
-# Jira-CSV-import add-on (→ OCTBASE_OPTION_JIRA_IMPORT). Booked by default
-# (`ledger.py new` sets it true unless --no-jira-import). Only honored for
-# the business edition: enterprise always includes the import, team can
-# never activate it (there the scaffold defaults to false).
+# Jira-CSV-import add-on (→ OCTBASE_OPTION_JIRA_IMPORT). Part of every
+# subscription since 2026-08-07, so `ledger.py new` sets it true on any
+# edition unless --no-jira-import.
+#
+# ⚠ The running app has not caught up: it still refuses the import on TEAM
+# whatever this says (403 FEATURE_DISABLED, menu entry hidden). Tracked as
+# drift under C3 in docs/consistency-register.md.
 jira_import: true
 # Licensed seats (→ OCTBASE_MAX_USERS).
 max_users: 25

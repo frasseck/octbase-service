@@ -135,27 +135,15 @@
               team, business or enterprise.
             quiet: true
 
-        # The add-on is booked by default and team can never have it, which is
-        # ledger.py's rule — so an empty answer omits the flag entirely and lets
-        # the CLI apply it, rather than this play deciding it a second time.
+        # Booked by default on every edition — an empty answer omits the flag
+        # and lets ledger.py apply that default, rather than this play deciding
+        # it a second time.
         - name: Jira-CSV-import add-on
           ansible.builtin.pause:
             prompt: >-
               Book the Jira-CSV-import add-on? yes / no
-              [empty: booked, except the team edition, which can never have it]
+              [empty: booked — it is part of every subscription]
           register: ask_jira
-
-        # ledger.py refuses this combination, but it would only say so after
-        # every remaining question had been answered and discarded.
-        - name: The team edition can never book the Jira import
-          ansible.builtin.assert:
-            that: not (ask_edition.user_input | trim | lower == 'team'
-                       and ask_jira.user_input | trim | lower in ['y', 'yes'])
-            fail_msg: >-
-              The add-on is not bookable on team — it is a business feature and
-              enterprise includes it. Re-run and either choose business, or
-              answer no here.
-            quiet: true
 
         - name: Licensed seats
           ansible.builtin.pause:
@@ -330,7 +318,9 @@
           - client_ledger.name is match('^[a-z][a-z0-9-]{1,27}$')
           - client_ledger.name not in ['www', 'dev', 'mail', 'api', 'octbase', 'admin']
           - client_ledger.edition | lower in ['team', 'business', 'enterprise']
-          - not ((client_ledger.jira_import | default(false)) and client_ledger.edition | lower == 'team')
+          # No edition/add-on combination is refused any more: the Jira import
+          # is part of every subscription since 2026-08-07. The app's own TEAM
+          # gate is tracked as drift under the register's C3.
           - client_ledger.max_users | int >= 1
           - client_ledger.ports.frontend is defined and client_ledger.ports.api is defined and client_ledger.ports.postgres is defined
           - client_ledger.status == 'active'
