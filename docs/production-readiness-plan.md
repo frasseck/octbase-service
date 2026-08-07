@@ -179,7 +179,7 @@ build-from-source path as fallback. This also removes the C13 clean-tree
 footgun entirely.
 
 ### S4 — Restriction of the non-client surface  *(½ day)*
-IP-filter or basic-auth `dev.octbase.io` at the edge, and decide the same for
+IP-filter or basic-auth `test.octbase.io` at the edge, and decide the same for
 the demo (it exists to be public — but rate-limit it at the edge). Security
 concept §7.
 

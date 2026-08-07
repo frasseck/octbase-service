@@ -5,7 +5,7 @@
 # that deploy the fleet-wide jobs which loop over that registry.
 #
 # Why this exists (register D29): `clients.d/dev.conf` was hand-written and
-# named `oct-dev`, an account that has never existed — dev.octbase.io deliberately
+# named `oct-dev`, an account that has never existed — the resident dev stack (test.octbase.io) deliberately
 # does NOT follow the client service-setup standard, it runs under the `claude`
 # account with systemd user units. Every fleet loop then reported it, forever:
 # `octbase-fleet-backup.service` sat in a permanent `failed` state, and

@@ -1035,11 +1035,14 @@ do not exist; `~/restart.sh` is gone; the dev stack's containers are exited
 in `failed`; and `dev.octbase.io` does not resolve via public DNS (empty
 answer from 1.1.1.1, not a local-resolver artifact), while beyags and demo
 serve normally on `octbase.io`. The overview's §1/§2 tables were updated
-to the measured paths. **Open, deliberately:** whether the dev instance's
-public name stays `dev.octbase.io`, follows the checkout to
-`test.octbase.io`, or retires in favour of the host name `dev01.octbase.io` —
-and whether the stopped dev stack is intended — are Lars's calls; nothing was
-"fixed" on the host.
+to the measured paths. **Resolved 2026-08-07, Lars: the dev
+instance is `test.octbase.io` now.** The name resolves publicly (A → dev01)
+and the edge terminates TLS for it (502 while the stack is down); references
+across the toolkit were updated the same day (`check-version-drift.py`'s
+default checkout path, CLAUDE.md, the security concept, the readiness plan,
+`ledger.py`/registry comments, platform-overview and two skills). Whether the
+stopped dev stack is intended remains the one open thread; nothing was
+touched on the host.
 
 ## 3. Review checklist (run per release, ~10 minutes)
 

@@ -45,7 +45,7 @@ the edge vhost snippet.
 |---|---|---|---|---|
 | Marketing `octbase.io` | `oct-web` | `ocete` ¹ | `ocete-web.service` ¹ | web 8120 (loopback) |
 | Demo `demo.octbase.io` | `oct-demo` | `octbase` | `octbase.service` | frontend 8110 · api 8111 · postgres 8112 |
-| Dev `dev.octbase.io` | `claude` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
+| Dev `test.octbase.io` | `claude` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
 | DB backup (legacy, dev only) | `claude` | — | `octbase-backup.timer` (daily 03:30) | — |
 | Client `<name>` | `oct-<name>` | `octbase` (per account) | per-user `octbase.service`, root `octbase-monitor.timer` + `octbase-fleet-backup.timer` (**not yet installed** — register D13) | frontend/api/postgres blocks from 8110, loopback-only |
 
@@ -92,7 +92,7 @@ the root-managed edge Caddyfile targets the host's public IP instead of
 instances are fully loopback-bound via `env.j2`. See consistency register C9.
 
 The public edge reverse proxy (root-managed Caddy, outside all four repos)
-terminates TLS for `octbase.io`, `demo.octbase.io`, `dev.octbase.io` and, later,
+terminates TLS for `octbase.io`, `demo.octbase.io`, `test.octbase.io` and, later,
 `<client>.octbase.io`, and forwards to the loopback/host ports above.
 
 ## 3. Inside the app stack (any instance)

@@ -64,7 +64,7 @@ available here. These local checks catch the mechanical errors; recommend a
    repo's `.env.example`:
    ```bash
    grep -oE '^OCTBASE_[A-Z_]+' playbooks/templates/env.j2 | sort -u \
-     | while read k; do grep -qE "^#?$k=" ~/dev.octbase.io/.env.example || echo "MISSING in .env.example: $k"; done
+     | while read k; do grep -qE "^#?$k=" ~/test.octbase.io/.env.example || echo "MISSING in .env.example: $k"; done
    ```
 
 6. **State docs** — if the change closes an item in the README's "Known

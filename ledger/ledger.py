@@ -64,7 +64,7 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # clients, so taken_ports() picks their blocks up from the ledger itself.
 RESERVED_PORTS = {
     5432, 5433, 8000, 8001, 8025, 8026, 8080, 8081, 8082, 8083,
-    8100, 8101, 8102,   # dev.octbase.io (resident, not a ledger client)
+    8100, 8101, 8102,   # test.octbase.io dev stack (resident, not a ledger client)
     8120,               # oct-web marketing site
 }
 PORT_BASE = 8110   # first client block; blocks advance in steps of 10
