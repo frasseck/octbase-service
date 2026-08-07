@@ -33,12 +33,15 @@ octbase_apparmor_profiles:
     mode: "{{ apparmor_mode_platform }}"
     attaches: /usr/local/lib/octbase/backup-fleet.sh (by path)
 
-  # ── The public edge — attached via systemd, complain until exercised ──────
-  # Its failure mode is every client domain at once, and it is the one service
-  # here this repo does not own, so it observes before it enforces.
+  # ── The public edge — loaded always, ATTACHED ONLY ON REQUEST ─────────────
+  # apparmor_confine_edge is off by default: attaching this took dev01's edge
+  # down on 2026-08-07 (caddy is Type=notify and never signalled readiness under
+  # the drop-in, in complain mode, which should permit everything). Register
+  # §2.19a. The profile is still deployed and loaded so it can be read, diffed
+  # and tested; only the caddy.service drop-in waits.
   - name: octbase-edge-caddy
     mode: "{{ apparmor_mode_edge }}"
-    attaches: caddy.service (systemd AppArmorProfile=)
+    attaches: caddy.service (systemd AppArmorProfile=) — only when apparmor_confine_edge
 
   # ── Client stack containers — loaded, nothing attaches them yet ───────────
   - name: octbase-postgres

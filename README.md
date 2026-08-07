@@ -589,8 +589,8 @@ Two things to know before the first run:
   `create-instance.yml` warns that usage is monitored but not enforced —
   which is the state both hosts are in today.
 - **AppArmor policy lands with the baseline.** The run loads nine profiles and
-  restarts the edge proxy once (a sub-second blip, and only when the drop-in
-  that confines it actually changed). Two of them enforce from that moment:
+  restarts nothing (the edge attachment is opt-in — see below). Two of them
+  enforce from that moment:
   the fleet monitor's and the fleet backup's — both of which are installed
   *afterwards* by their own playbooks, which is fine, a profile simply applies
   from the first exec of the file it names. On a host that is already in
@@ -859,12 +859,11 @@ the next connection is refused. Bringing one hardening measure to a live host
 should not put that on the table.
 
 `install-apparmor.yml` is safe to run repeatedly: a profile is re-loaded only
-when its file changed or the kernel does not hold it. The one disruptive
-moment is the **first** run on a host, which writes the `caddy.service`
-drop-in — and a drop-in only reaches a running daemon on a restart, so Caddy is
-restarted once, a sub-second gap on every domain that host serves. Later runs
-leave it alone. `--check --diff` shows the drop-in as a change exactly when the
-restart would follow.
+when its file changed or the kernel does not hold it. With
+`apparmor_confine_edge` off (the default) it touches no running service at all —
+it writes and loads policy, and the two enforcing profiles apply from the next
+exec of the scripts they name. The edge proxy is only restarted when you ask
+for the attachment, and a restart that fails is undone before the play exits.
 
 It is also how a profile's mode is changed, since the mode is baked into the
 file the parser loads:
@@ -880,19 +879,31 @@ ansible-playbook playbooks/install-apparmor.yml -e apparmor_mode_platform=compla
 |---|---|---|---|
 | `octbase-monitor` | `monitor-all.sh` — root, every 5 min, across every client | executable path | `apparmor_mode_platform` (enforce) |
 | `octbase-backup` | `backup-fleet.sh` — root, nightly, every client's dumps and `.env` | executable path | `apparmor_mode_platform` (enforce) |
-| `octbase-edge-caddy` | the public edge proxy | `caddy.service` drop-in | `apparmor_mode_edge` (complain) |
+| `octbase-edge-caddy` | the public edge proxy | `caddy.service` drop-in | **off** — `apparmor_confine_edge`, see below |
 
 The edge is confined through a unit drop-in rather than a path attachment on
 `/usr/bin/caddy`, because AppArmor resolves an executable's path against the
 container's own root — a path attachment would also catch the Caddy running
-*inside* the frontend, mobile and marketing containers. It starts in **complain**
-mode deliberately: its failure mode is every client domain at once. Read what it
-would have blocked, then promote it:
+*inside* the frontend, mobile and marketing containers.
+
+> **The edge attachment is off by default, and that is not caution — it is an
+> incident.** On 2026-08-07 the first real run turned it on and **dev01's edge
+> went down**: `caddy.service` is `Type=notify`, under the drop-in it never
+> signalled readiness, systemd `SIGKILL`ed it at the start timeout, and
+> `test.octbase.io` and `octbase.io` stopped answering until the drop-in was
+> removed by hand. The profile was in **complain** mode, which permits
+> everything and only logs, so the mechanism is not understood — register
+> §2.19a. The profile is still deployed and loaded; only the attachment waits.
+
+Turning it on is now survivable — if caddy will not start, the play removes the
+drop-in, restarts caddy unconfined and *then* fails — but do it one host at a
+time and watch it:
 
 ```bash
+ansible-playbook playbooks/install-apparmor.yml -e target_host=dev01 \
+    -e apparmor_confine_edge=true
+journalctl -xeu caddy.service -n 60                          # if it did not come up
 journalctl -k | grep 'apparmor=' | grep octbase-edge-caddy   # ALLOWED = would have denied
-# add anything genuine to /etc/apparmor.d/local/octbase-edge-caddy, then:
-ansible-playbook playbooks/install-apparmor.yml -e apparmor_mode_edge=enforce
 ```
 
 Every profile ends with `include if exists <local/<name>>`, so site-specific
