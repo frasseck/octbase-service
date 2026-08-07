@@ -121,14 +121,17 @@ ansible-playbook playbooks/sync-instance.yml -e client=demo -e octbase_branch=re
 ```
 
 Clones/updates the branch into a cache **on the admin machine**, rsyncs it into
-`~/octbase` (same excludes as create), refreshes the compose override, and —
-**only if the source changed** — rebuilds, restarts, gates on `/health`.
-Re-running on the branch tip is a no-op. Constraints an agent must respect:
+`~/octbase` (same excludes as create), refreshes the compose override, then
+**always** rebuilds, restarts and gates on `/health`. App code is baked into
+the images at build time, so **every run restarts the stack** — re-running on
+the branch tip is not a no-op, it is another brief outage. Constraints an agent
+must respect:
 
 - **Update-only.** It refuses an unprovisioned instance and never touches
   secrets, data, ports, or ledger-managed settings — the one `.env` line it
   writes is the version stamp (below). Provision with `create-instance.yml`
-  first; suspended/removed clients are skipped (`status == 'active'` assert).
+  first. A suspended/removed client is **not skipped — the run fails** on the
+  `status == 'active'` assert, which matters when looping over a host.
 - **Re-stamps the version from the ledger.** `OCTBASE_APP_VERSION` is
   re-applied from `app_version` (falling back to `octbase_version`) on every
   run, so a sync cannot leave the stamp behind the code (C4). The ledger stays
@@ -138,6 +141,33 @@ Re-running on the branch tip is a no-op. Constraints an agent must respect:
   running DB schema version before syncing — a downgrade is not handled.
 - Not a substitute for the release rollout when a client must be on a
   *stamped, reviewed* release; use `create-instance.yml` for that.
+
+## Sync every instance on one host
+
+There is **no `sync-host.yml`**. `sync-instance.yml` is one client per run, so
+fan-out is a shell loop over the ledger — the same model as the release rollout
+above. Enumerate, then loop:
+
+```bash
+# admin machine — every ACTIVE client pinned to prod01
+clients=$(./ledger/ledger.py list --host prod01 --status active --names-only) || exit 1
+for c in $clients; do
+    ansible-playbook playbooks/sync-instance.yml -e client="$c" || break
+done
+```
+
+- `--names-only` prints one name per line; `--host` is validated against
+  `inventory/hosts.yml`, and a selection that matches nothing **exits
+  non-zero** — hence `|| exit 1`. Without it an empty list makes the loop a
+  silent no-op that reads as a clean sweep.
+- `|| break` is the chosen failure policy: **stop at the first failure**, leave
+  the remaining clients on their old code. Do not quietly change this to
+  `continue` — a bad branch would then be pushed to every instance on the host.
+- Each iteration is a full sync: rebuild, restart, health gate. The host takes
+  one brief outage per instance, serially. Verify afterwards with
+  `scripts/check-version-drift.py` and the `fleet-health` skill.
+- Not a release path. To put a host's clients on a *stamped* release, loop
+  `create-instance.yml` the same way after bumping the ledger.
 
 ## Suspend / offboard
 

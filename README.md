@@ -68,7 +68,7 @@ so putting a client on `dev01` is an explicit choice.
 | Path | Purpose |
 |---|---|
 | `ledger/clients/*.yml` | **The client ledger** — one file per client, committed to git |
-| `ledger/ledger.py` | Ledger CLI: `new`, `list`, `validate`, `next-ports` |
+| `ledger/ledger.py` | Ledger CLI: `new`, `set`, `list` (`--host`/`--status`/`--names-only`), `validate`, `next-ports` |
 | `scripts/check-version-drift.py` | Read-only: every version stamp vs the app repo's tags + changelog (C4/C13) |
 | `inventory/hosts.yml` | The production host(s) Ansible connects to |
 | `inventory/hosts.yml.template` | Pristine reference copy of the above — `diff` a mangled inventory against it, or copy it back to start over |
@@ -174,7 +174,16 @@ Ledger CLI (run from the repo root):
 ./ledger/ledger.py list        # table of all clients
 ./ledger/ledger.py validate    # names, editions, port collisions, add-on rules
 ./ledger/ledger.py next-ports  # next free port triplet
+
+# `list` filters — narrow the table, or emit bare names for a shell loop
+./ledger/ledger.py list --host prod01 --status active
+./ledger/ledger.py list --host prod01 --status active --names-only
 ```
+
+`--host` is checked against `inventory/hosts.yml`, and a filter that matches
+nothing exits **non-zero** with a message on stderr rather than printing an
+empty list — in a `for` loop the two are indistinguishable, and "synced a host
+that has no clients" must not read as success (see the per-host sync below).
 
 The ledger holds **no secrets**. Per-client secrets (DB password, JWT secret,
 encryption keys) are generated on first deployment and live only in the
@@ -368,6 +377,41 @@ the code — to change it, edit the ledger entry *before* syncing. To re-apply
 the other ledger/platform `.env` settings, run `create-instance.yml`. Make sure
 the branch is at or above the running schema version before syncing a live
 instance.
+
+### Sync every instance on one host
+
+`sync-instance.yml` is deliberately **one client per run** — it derives every
+fact from `-e client=`, loads that one ledger entry and scopes itself to that
+client's host. To sync a whole host, enumerate its clients from the ledger and
+loop; there is no `sync-host.yml`, for the same reason the release rollout is
+`create-instance.yml` per active client rather than a fleet playbook.
+
+```bash
+# admin machine — every ACTIVE client pinned to prod01, in ledger order
+clients=$(./ledger/ledger.py list --host prod01 --status active --names-only) || exit 1
+for c in $clients; do
+    ansible-playbook playbooks/sync-instance.yml -e client="$c" || break
+done
+```
+
+Three parts of that loop are load-bearing:
+
+- **`|| break` stops at the first failure.** The clients not yet reached stay
+  on their old code. A branch that breaks one instance will usually break the
+  next, and a half-synced host is less to unwind than a fully broken one. Drop
+  the `|| break` only if you have decided the opposite.
+- **`|| exit 1` on the enumeration.** An unknown host, or a host with no active
+  clients, exits non-zero — without that guard the `for` would iterate an empty
+  list and the run would look like a clean sweep.
+- **`--status active` is not optional in spirit.** `sync-instance.yml` asserts
+  `status == 'active'` and fails on anything else, so a suspended client in the
+  list would stop the loop at that client rather than skip it.
+
+Every constraint of the single-client path still applies to each iteration —
+it is the same playbook. In particular each client is rebuilt and restarted in
+turn, so the host sees one brief outage per instance, serially, and the whole
+loop takes roughly *n* × a single sync. Check the fleet afterwards
+(`scripts/check-version-drift.py`, and the `fleet-health` skill).
 
 ### Reset a user's password
 
