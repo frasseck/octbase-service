@@ -22,7 +22,7 @@ the live host (§2.4; the v1.0.5–v1.0.7 releases had skipped this checklist).
 |---|---|---|---|
 | C1 | **Env variable surface**: every `OCTBASE_*` variable's name and default | app repo `.env.example` + code defaults | app `podman-compose.yml` pass-through · this repo `env.j2` + `podman-compose.client.yml` · app `README.md` env table |
 | C2 | **Product limits sold = limits enforced**: min 5 seats, 10 MB/file, 0.5 GB/user | API code defaults (`main.go`: users 5, upload 10, storage 512) | `env.j2` (10/512) · client override fail-closed defaults · `octbase.io` pricing note (“10 MB per file, 0.5 GB … per user”, “minimum 5 users”) |
-| C3 | **Edition model**: `team \| business \| enterprise`; Jira import = add-on on business only, included in enterprise, never on team | API `OCTBASE_EDITION` / `OCTBASE_OPTION_JIRA_IMPORT` gating | `ledger.py` (`EDITIONS`, add-on rule) · `create-instance.yml` assert · the marketing site's `pricing.html` (add-on shown only on the Business card) |
+| C3 | **Edition model**: `team \| business \| enterprise`; Jira import bookable on every edition (product rule, 2026-08-07) — **the API has not followed: it still refuses TEAM. Open drift, §2.16** | API `OCTBASE_EDITION` / `OCTBASE_OPTION_JIRA_IMPORT` gating | `ledger.py` (`EDITIONS`, add-on default) · `create-instance.yml` · the marketing site's `pricing.html` (add-on card placement) |
 | C4 | **Version stamping**: a deployed `OCTBASE_APP_VERSION` must correspond to a dated `CHANGELOG.md` release entry | app repo `CHANGELOG.md` (release skill renames `Unreleased`) | `OCTBASE_APP_VERSION` in dev/demo `.env` · `octbase_version` in `inventory/group_vars/all/main.yml` · `app_version` per ledger entry |
 | C5 | **API surface**: served routes = `api/openapi.yaml` = app `README.md` API reference | chi router | `TestEveryRouteIsDocumented` covers routes→spec **only** — a route removed from code is *not* flagged when it lingers in the spec or README; check those by hand |
 | C6 | **Health contract**: `GET /health` returns 200 on the API port *and* through the frontend Caddy (`@backend` matcher) | app repo (API `main.go`, frontend `Caddyfile`) | `create-instance.yml` / `set-max-users.yml` health waits · `check-health.sh` · `monitor-all.sh` edge probe · external uptime checks |
@@ -327,8 +327,8 @@ binds `0.0.0.0:8110` although its edge vhost already targets
 clients" claim does not hold live.
 
 ### D15 — Marketing port 8120 missing from `RESERVED_PORTS` (C8) — **fixed**
-`scripts/migrate-ocete-web.sh` moved the marketing site to
-`127.0.0.1:8120`, inside the client allocation range (blocks of 10 from
+The marketing-site migration script (since removed) moved the marketing site
+to `127.0.0.1:8120`, inside the client allocation range (blocks of 10 from
 8110; demo holds 8110–8112) — `ledger.py next-ports` would have handed
 8120–8122 to the **next client**, whose frontend could then never bind.
 8120 added to `RESERVED_PORTS`.
@@ -720,7 +720,7 @@ them, and prune the whole backup root so offboarded clients' files age out;
 `backup-octbase.sh` flags existing-but-stopped postgres containers as
 ERRORs instead of silently omitting them; `monitor-all.sh` alerts once per
 deregistered client (`→ gone`) and reports an empty registry as DEGRADED;
-`migrate-ocete-web.sh` deploys via `enable` + `restart` (the old
+the marketing-site migration script (since removed) deploys via `enable` + `restart` (the old
 `enable --now` was a no-op on the active RemainAfterExit unit) and a failed
 curl can no longer read as `000ERR`; `check-version-drift.py` FAILs the
 changelog check only when the local checkout contains the tag (WARN
@@ -1019,11 +1019,15 @@ across the toolkit — runnable commands and current-state claims now name
 `octbase.io`, and dated history entries (including in this file) were
 rephrased to not carry the old domain. The originals are in git history; this
 supersedes `docs/platform-overview.md` §6's earlier keep-them policy. Two
-kinds of mention deliberately remain: the dated rename anchor in
+kinds of mention deliberately remained at first: the dated rename anchor in
 platform-overview §6, and the literal names of the `oct-web` account's
-pre-rename artifacts in §2's cleanup runbook (they name real files that
-still exist on the host; scrubbing them would make the cleanup instructions
-wrong).
+pre-rename artifacts in §2's cleanup runbook. **Later the same day Lars asked
+for those too** (OCT-64): §6 no longer names the old domain, and the `oct-web`
+cleanup runbook now points to its own git history for the literal file names
+instead of spelling them out. Note what was scrubbed is documentation only —
+the pre-rename artifacts themselves still exist on the host (verified
+2026-08-07: the marketing stack's containers still run under the old compose
+project name), and the root cleanup in overview §2 is still pending.
 
 ### D31 — `platform-overview.md` described checkouts that no longer exist — **doc updated; dev-instance state is Lars's**
 
@@ -1043,6 +1047,40 @@ default checkout path, CLAUDE.md, the security concept, the readiness plan,
 `ledger.py`/registry comments, platform-overview and two skills). Whether the
 stopped dev stack is intended remains the one open thread; nothing was
 touched on the host.
+
+## 2.16 Jira import opened to every edition in the toolkit, while the app still refuses TEAM (2026-08-07, C3) — **OPEN**
+
+On Lars's instruction ("team always has jira import — it is default for all
+subscriptions") the add-on's edition rule was removed from this repo:
+`ledger.py new` now defaults `jira_import: true` on every edition and no
+longer refuses `team`, `ledger.py validate` no longer errors on the
+combination, and `create-instance.yml` dropped both its pre-flight assert and
+the onboarding dialog's guard.
+
+**The app was not changed and does not agree.** Measured in the checkout at
+`~/test.octbase.io` on 2026-08-07:
+
+- `jiraImportEnabled()` (`octbase-api/cmd/octbase-api/main.go`) returns `true`
+  for ENTERPRISE, `opted` for BUSINESS, and `false` for everything else —
+  logging `"OCTBASE_OPTION_JIRA_IMPORT is set but the Jira import option can
+  only be activated in the BUSINESS edition; ignoring"` when the flag is set
+  on TEAM.
+- `TestJiraImportEnabled` pins it: `{editionTeam, "true", false}`.
+- `.env.example` still says "TEAM can never activate it"; the OpenAPI
+  description says the endpoint answers **403 `FEATURE_DISABLED`** and the SPA
+  hides the menu entry via `features.jiraCsvImport`.
+
+So a `team` client provisioned today gets `OCTBASE_OPTION_JIRA_IMPORT=true` in
+its `.env`, the API ignores it, and the customer sees no import — a booked
+feature that does not exist for them. The ledger is now the optimistic side of
+the contract, deliberately.
+
+To close, in the app repo: change `jiraImportEnabled` (and its test matrix),
+`.env.example` and the OpenAPI description; then the marketing site's
+`pricing.html`, where the add-on currently sits on the Business card only.
+Until all three land, do not onboard a `team` client expecting the import to
+work — or set `jira_import: false` for that client and revisit after the app
+release.
 
 ## 3. Review checklist (run per release, ~10 minutes)
 
