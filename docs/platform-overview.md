@@ -46,7 +46,7 @@ the edge vhost snippet.
 |---|---|---|---|---|
 | Marketing `octbase.io` | `oct-web` | pre-rename ¹ | pre-rename ¹ | web 8120 (loopback) |
 | Demo `demo.octbase.io` | `oct-demo` | `octbase` | `octbase.service` | frontend 8110 · api 8111 · postgres 8112 |
-| Dev `test.octbase.io` | `claude` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
+| Dev `test.octbase.io` | `claude` | `octbase_dev` | `octbase-dev.service` | postgres 8102 · api 8101 · frontend 8100 · Mailpit UI 8026 (dev overlay only) ² |
 | DB backup (legacy, dev only) | `claude` | — | `octbase-backup.timer` (daily 03:30) | — |
 | Client `<name>` | `oct-<name>` | `octbase` (per account) | per-user `octbase.service`, root `octbase-monitor.timer` + `octbase-fleet-backup.timer` (**not yet installed** — register D13) | frontend/api/postgres blocks from 8110, loopback-only |
 
@@ -72,6 +72,14 @@ the cleanup. Then run the setup script and update this row. Note the edge curren
 snippet; the script refuses to run until that inline block is removed, rather
 than creating a duplicate vhost Caddy would reject.
 
+² The dev ports moved from `5433 / 8001 / 8081` (and Mailpit `8025`) on
+2026-07-26; this row still carried the old set until 2026-08-07.
+`~/test.octbase.io/.env` is the authority — `POSTGRES_PORT` / `API_PORT` /
+`FRONTEND_PORT` / `MAILPIT_HTTP_PORT` — so read it rather than this table if
+the two ever disagree again. A stale port here is worse than no port at all:
+8000 and 5432 are free on this host now, so the old numbers do not fail
+loudly, they just answer as whatever else happens to be listening.
+
 Also on the host: `~/credentials/` (the real `.env` files for dev and
 marketing — `~/test.octbase.io/.env` is a symlink into it), `~/backups/`
 (legacy nightly dumps + `backup.log`; covers only what the `claude` account
@@ -80,8 +88,10 @@ old `~/restart.sh` was removed with the migrations; deploy the demo with
 `sync-instance.yml`.
 
 **Port binding:** since 2026-07-10 the resident stacks bind Postgres and API
-ports to `127.0.0.1`; the dev frontend (8081) remains on `0.0.0.0` because
-the root-managed edge Caddyfile targets the host's public IP instead of
+ports to `127.0.0.1`. The dev frontend is now loopback-bound too
+(`127.0.0.1:8100`, via `FRONTEND_BIND_ADDR` in its `.env`) — verified against
+the running containers on 2026-08-07. It used to sit on `0.0.0.0` because the
+root-managed edge Caddyfile targeted the host's public IP instead of
 `127.0.0.1` (readiness plan B4). The demo frontend currently also binds
 `0.0.0.0:8110` although its edge vhost targets loopback — flip its
 `FRONTEND_PORT` to `127.0.0.1:8110` and restart (register D14). Client
