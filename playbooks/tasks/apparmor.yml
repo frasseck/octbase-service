@@ -121,8 +121,14 @@
       ansible.builtin.copy:
         dest: /etc/systemd/system/caddy.service.d/10-octbase-apparmor.conf
         mode: "0644"
+        # A literal marker, not {{ ansible_managed }}: that variable is injected
+        # by the TEMPLATE module and does not exist for an inline copy content —
+        # under ansible-core 2.19 the task fails outright with "'ansible_managed'
+        # is undefined". Every other inline content: in this repo spells the
+        # marker out for that reason; the profiles next door are templates, so
+        # they can and do use the variable.
         content: |
-          # {{ ansible_managed }}
+          # Managed by octbase-service / playbooks/tasks/apparmor.yml
           [Service]
           # The leading '-' makes a missing or unloadable profile non-fatal.
           # A policy problem must not take the fleet's front door down with it.
@@ -164,6 +170,9 @@
   ansible.builtin.set_fact:
     podman_apparmor_capable: "{{ (podman_capability.rc | default(1)) == 0 and (podman_capability.stdout | default('{}', true) | from_json).get('host', {}).get('security', {}).get('apparmorEnabled', false) | bool }}"
 
+# `| string | lower` rather than `| lower`: ansible-core 2.19 templating keeps
+# native types, so the fact above is a real bool there and `lower` on a bool is
+# a templating error.
 - name: AppArmor policy on this host
   ansible.builtin.debug:
     msg: >-
@@ -175,7 +184,7 @@
           'Loosen one while tuning:  -e apparmor_mode_platform=complain',
           '',
           'The six CONTAINER profiles are loaded and worn by nothing: this host\'s',
-          'podman reports AppArmorEnabled=' ~ (podman_apparmor_capable | lower) ~ ' for a rootless',
+          'podman reports AppArmorEnabled=' ~ (podman_apparmor_capable | string | lower) ~ ' for a rootless',
           'runtime, and client stacks are rootless by design. Turning client_apparmor on',
           'would make create-instance.yml refuse rather than deploy an unconfined stack.']
          if apparmor_ok | bool else
