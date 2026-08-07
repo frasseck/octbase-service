@@ -1110,6 +1110,29 @@ a label-based resolve of its own eventually. Evidence and the failing runs:
 OCT-65/OCT-66. Validated with `playbook-check` only (no Ansible on this
 host); "fixed" is confirmed once a real offboarding run passes the assert.
 
+## 2.17 Creation blocker 2026-08-07 — ledger.py vs a vault-encrypted group_vars (D33)
+
+### D33 — `ledger.py` crashed with a bare traceback on non-mapping YAML — **fixed**
+
+`create-instance.yml` died at "Validate the whole ledger":
+`default_host()` did `.get()` on whatever `yaml.safe_load` returned, and on
+the admin machine `group_vars/all/main.yml` had been **ansible-vault
+encrypted** — a vault file parses as one long plain scalar, so `gv` was a
+`str`. The same root cause explains the preceding `remove-instance` failure
+(`'clients_registry_dir' is undefined`): an encrypted `main.yml` without a
+vault password means Ansible loads no group_vars at all. Policy stands as
+documented: **only `vault.yml` (`vault_smtp_pass`) is ever encrypted**;
+`main.yml` stays plaintext and references the vault var. Every
+`safe_load`-then-`.get` site in `ledger.py` now demands a mapping and exits
+with a reason — naming ansible-vault explicitly when the `$ANSIBLE_VAULT`
+header is present — instead of a traceback: `default_host`,
+`inventory_hosts` (incl. a malformed `octbase_hosts.hosts`), `load_clients`,
+`cmd_set`'s before/after parses, `used_ports`, and `validate`'s ports-shape
+check. Verified against a nine-case matrix in a scratch repo copy (vault
+header / list / missing-default in group_vars, vault + list-shaped inventory,
+vault + list-ports client files, and the `new`/`set`/`validate`/`list` round
+trip). Evidence: OCT-68.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash

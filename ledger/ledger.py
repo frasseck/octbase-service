@@ -81,18 +81,47 @@ RESOURCE_KEYS = {
 }
 
 
+def _require_mapping(path, data, text):
+    """Parsed YAML that must be a mapping — exit with a reason, not a traceback.
+
+    The one way a well-formed repo file turns into a scalar in practice is
+    ansible-vault encryption: the whole vault body parses as one long plain
+    string, and every `.get()` after it is an AttributeError (2026-08-07: an
+    encrypted group_vars/all/main.yml broke `validate` mid-onboarding, D33).
+    Say that specifically — the fix is on the operator's machine, not here.
+    """
+    if isinstance(data, dict):
+        return data
+    if text.lstrip().startswith("$ANSIBLE_VAULT"):
+        sys.exit(f"{path} is ansible-vault encrypted — this tool reads YAML "
+                 f"directly and cannot decrypt it. Only "
+                 f"inventory/group_vars/all/vault.yml (vault_smtp_pass) may be "
+                 f"encrypted; every other repo file stays plaintext. Restore "
+                 f"it with: ansible-vault decrypt {path}")
+    sys.exit(f"{path}: expected a YAML mapping at the top level, "
+             f"got {type(data).__name__}")
+
+
 def inventory_hosts():
     """Host names from inventory/hosts.yml (the valid values for `host:`)."""
     try:
-        with open(INVENTORY_FILE) as fh:
-            inv = yaml.safe_load(fh) or {}
-        return set((inv.get("octbase_hosts", {}).get("hosts") or {}).keys())
+        text = INVENTORY_FILE.read_text()
     except OSError:
         return set()
+    try:
+        inv = _require_mapping(INVENTORY_FILE, yaml.safe_load(text) or {}, text)
     except yaml.YAMLError as e:
         # unlike a missing file, a broken one must not silently disable
         # host validation — say what is wrong and stop
         sys.exit(f"cannot parse {INVENTORY_FILE}: {e}")
+    group = inv.get("octbase_hosts")
+    if group is None:
+        return set()
+    if not isinstance(group, dict) or not isinstance(group.get("hosts") or {}, dict):
+        # same rule: malformed must not degrade into "no host validation"
+        sys.exit(f"{INVENTORY_FILE}: octbase_hosts.hosts must be a mapping "
+                 f"of host names")
+    return set((group.get("hosts") or {}).keys())
 
 
 def default_host():
@@ -104,8 +133,8 @@ def default_host():
     server is not something to discover after `create-instance.yml` ran.
     """
     try:
-        with open(GROUP_VARS_FILE) as fh:
-            gv = yaml.safe_load(fh) or {}
+        text = GROUP_VARS_FILE.read_text()
+        gv = _require_mapping(GROUP_VARS_FILE, yaml.safe_load(text) or {}, text)
         if gv.get("default_client_host"):
             return str(gv["default_client_host"])
         reason = f"no default_client_host in {GROUP_VARS_FILE.name}"
@@ -125,18 +154,21 @@ def default_host():
 def load_clients():
     clients = {}
     for f in sorted(CLIENTS_DIR.glob("*.yml")):
-        with open(f) as fh:
-            try:
-                clients[f.stem] = yaml.safe_load(fh) or {}
-            except yaml.YAMLError as e:
-                sys.exit(f"cannot parse {f}: {e}")
+        text = f.read_text()
+        try:
+            clients[f.stem] = _require_mapping(f, yaml.safe_load(text) or {}, text)
+        except yaml.YAMLError as e:
+            sys.exit(f"cannot parse {f}: {e}")
     return clients
 
 
 def used_ports(clients):
     ports = set(RESERVED_PORTS)
     for c in clients.values():
-        ports.update((c.get("ports") or {}).values())
+        block = c.get("ports")
+        if isinstance(block, dict):
+            # non-int values are validate's job to reject, not a crash here
+            ports.update(v for v in block.values() if isinstance(v, int))
     return ports
 
 
@@ -292,8 +324,12 @@ def cmd_set(args):
     if not path.exists():
         sys.exit(f"{path} does not exist — scaffold it with "
                  f"`ledger.py new {args.name} …`")
-    lines = path.read_text().split("\n")
-    before = yaml.safe_load("\n".join(lines)) or {}
+    text = path.read_text()
+    lines = text.split("\n")
+    try:
+        before = _require_mapping(path, yaml.safe_load(text) or {}, text)
+    except yaml.YAMLError as e:
+        sys.exit(f"cannot parse {path}: {e}")
 
     scalars = {
         "display_name": args.display, "contact": args.contact,
@@ -314,7 +350,11 @@ def cmd_set(args):
         if value is not None:
             lines = _set_resource(lines, key, value)
 
-    after = yaml.safe_load("\n".join(lines)) or {}
+    try:
+        after = yaml.safe_load("\n".join(lines)) or {}
+    except yaml.YAMLError as e:
+        sys.exit(f"internal error: the edit produced YAML that no longer "
+                 f"parses ({e}) — {path} NOT written")
 
     # The same rules `validate` applies, checked against the RESULT rather than
     # the flags: a field left alone can still be made invalid by one that moved
@@ -443,7 +483,11 @@ def cmd_validate(_args):
             elif not RESOURCE_KEYS[k].match(str(v)):
                 errors.append(f"{where}: resources.{k}={v!r} has an invalid format")
         ports = c.get("ports") or {}
-        if set(ports) != {"frontend", "api", "postgres"}:
+        if not isinstance(ports, dict):
+            errors.append(f"{where}: ports must be a mapping of "
+                          f"frontend/api/postgres to port numbers")
+            ports = {}
+        elif set(ports) != {"frontend", "api", "postgres"}:
             errors.append(f"{where}: ports must define frontend, api and postgres")
         for role, p in ports.items():
             if not isinstance(p, int) or not (1024 < p < 65536):
