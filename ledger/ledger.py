@@ -38,7 +38,12 @@ GROUP_VARS_FILE = (Path(__file__).resolve().parent.parent
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,26}[a-z0-9]$")
 # "demo" is deliberately not reserved: the public demo is ledger-managed
 # since 2026-07-11 (clients/demo.yml, migrated via migrate-instance.yml).
-RESERVED_NAMES = {"www", "dev", "mail", "api", "octbase", "admin"}
+# "test" IS reserved: test.octbase.io is the dev stack's public domain since
+# the 2026-08-06 rename (docs/platform-overview.md), so a client named test
+# would collide with it at DNS and at the edge. "dev" stays reserved too —
+# it is the pre-rename label and still a confusing name to hand out.
+# Mirrored by the ledger-validation assert in playbooks/create-instance.yml.
+RESERVED_NAMES = {"www", "dev", "test", "mail", "api", "octbase", "admin"}
 EDITIONS = {"team", "business", "enterprise"}
 STATUSES = {"active", "suspended", "removed"}
 # The contact is not just a record: create-instance.yml makes it the login of
