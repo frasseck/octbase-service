@@ -1,6 +1,6 @@
-name: educaswiss
-display_name: educaswiss
-contact: server@educaswiss.ch
+name: nicolestutz
+display_name: nicolestutz
+contact: nicole.stutz@uzh.ch
 edition: team
 jira_import: true
 max_users: 5
@@ -10,7 +10,7 @@ app_version: 1.0.1
 host: prod01
 disk_quota_gb: 10
 ports:
-  frontend: 8170
-  api: 8171
-  postgres: 8172
+  frontend: 8160
+  api: 8161
+  postgres: 8162
 notes: ''

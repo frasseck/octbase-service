@@ -1,4 +1,4 @@
-name: educaswiss
+name: educaplan
 display_name: educaswiss
 contact: server@educaswiss.ch
 edition: team
@@ -10,7 +10,7 @@ app_version: 1.0.1
 host: prod01
 disk_quota_gb: 10
 ports:
-  frontend: 8170
-  api: 8171
-  postgres: 8172
+  frontend: 8140
+  api: 8141
+  postgres: 8142
 notes: ''
