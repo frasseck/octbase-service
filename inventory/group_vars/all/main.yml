@@ -94,8 +94,8 @@ octbase_version: "1.0.1"
 # disappearing, and that is the intended failure mode.
 smtp_host: "v091380.kasserver.com"
 smtp_port: 587
-smtp_from: noreply@beyags.com
-smtp_user: "m07fb762"
+smtp_from: noreply@octbase.io
+smtp_user: "m080f437"
 smtp_pass: "{{ vault_smtp_pass | default('') }}"
 
 # CIDRs whose X-Forwarded-For the API honors (the stack's own frontend Caddy
