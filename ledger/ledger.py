@@ -8,7 +8,8 @@ it never talks to the server.
 Commands:
   new NAME [options]   scaffold a client file with the next free port block
   set NAME [options]   change fields of an existing file, comments preserved
-  list                 print the client table
+  list [--host H] [--status S] [--names-only]
+                       print the client table, or just the matching names
   validate             check names, editions, add-on rules, port collisions
   next-ports           print the next free frontend/api/postgres triplet
 """
@@ -403,12 +404,45 @@ def cmd_set(args):
         print(f"  {k}: {old!r} -> {new!r}")
 
 
-def cmd_list(_args):
+def cmd_list(args):
     clients = load_clients()
     if not clients:
         print("no clients in the ledger")
         return
     dflt_host = default_host()
+
+    # --host is validated against the inventory, not just matched: a typo'd or
+    # retired host name matches no client, and the caller of --names-only is a
+    # shell loop that would then run zero playbooks and finish green. Same
+    # silent no-op that playbooks/tasks/assert-client-host.yml exists to
+    # prevent on the Ansible side — an operator reads it as "all synced".
+    if args.host:
+        known_hosts = inventory_hosts()
+        if known_hosts and args.host not in known_hosts:
+            sys.exit(f"unknown host {args.host!r} — must be one of "
+                     f"{sorted(known_hosts)} (inventory/hosts.yml)")
+
+    clients = {name: c for name, c in clients.items()
+               if (args.host is None or str(c.get("host", dflt_host)) == args.host)
+               and (args.status is None or str(c.get("status", "")) == args.status)}
+
+    # Same reasoning: an empty selection is a real answer ("nothing on dev01"),
+    # but inside `for c in $(...)` it is indistinguishable from success. Report
+    # it on stderr and exit non-zero so a `|| exit` guard can stop the loop
+    # before it reports having synced a host it never touched.
+    if not clients:
+        sys.exit("no clients match "
+                 + " ".join(f"--{k} {v}" for k, v in
+                            (("host", args.host), ("status", args.status))
+                            if v is not None))
+
+    # One name per line, nothing else — the machine-readable form the per-host
+    # sync loop in the README consumes.
+    if args.names_only:
+        for name in clients:
+            print(name)
+        return
+
     hdr = ("NAME", "HOST", "EDITION", "JIRA", "SEATS", "DISK", "STATUS", "REGISTERED", "FRONTEND", "DISPLAY NAME")
     rows = [hdr]
     for name, c in clients.items():
@@ -572,7 +606,18 @@ def main():
     p_set.add_argument("--tasks-max", type=int, default=None)
     p_set.set_defaults(func=cmd_set)
 
-    sub.add_parser("list", help="print the client table").set_defaults(func=cmd_list)
+    # Filters exist for the per-host sync loop (README, "Sync every instance on
+    # one host"): sync-instance.yml is single-client, so fanning out over a
+    # host means enumerating its clients here and looping in the shell.
+    p_list = sub.add_parser("list", help="print the client table")
+    p_list.add_argument("--host", default=None,
+                        help="only clients pinned to this inventory host")
+    p_list.add_argument("--status", choices=sorted(STATUSES), default=None,
+                        help="only clients with this status")
+    p_list.add_argument("--names-only", action="store_true",
+                        help="print one client name per line instead of the "
+                             "table — for shell loops over the selection")
+    p_list.set_defaults(func=cmd_list)
     sub.add_parser("validate", help="validate all ledger entries").set_defaults(func=cmd_validate)
     sub.add_parser("next-ports", help="next free port block").set_defaults(func=cmd_next_ports)
 

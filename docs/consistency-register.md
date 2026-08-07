@@ -351,6 +351,14 @@ The git task pinned `version: main`, so the documented
 claimed a re-run at the branch tip is a no-op — the playbook deliberately
 **always** rebuilds and restarts (code is baked into the images); both
 texts now state that every sync run causes a brief restart.
+**2026-08-08: the fix had missed a third copy.** `.claude/skills/client-ops`
+still carried the original wording ("only if the source changed", "re-running
+on the branch tip is a no-op") — the text an agent reads, and the one that
+matters most when looping the play over a host, where it understates the
+outage as zero instead of one restart per client. Corrected there too, along
+with its claim that suspended/removed clients are "skipped": the
+`status == 'active'` assert **fails** the run. When a claim about a playbook is
+wrong, grep for every copy of it — this one lived in three places.
 
 ### D18 — `octbase_version` stale at 1.0.4 (C4) — **fixed**
 The app CHANGELOG's latest release is v1.0.7 (2026-07-14) and the demo
