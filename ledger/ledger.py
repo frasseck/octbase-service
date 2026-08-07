@@ -7,6 +7,7 @@ it never talks to the server.
 
 Commands:
   new NAME [options]   scaffold a client file with the next free port block
+  set NAME [options]   change fields of an existing file, comments preserved
   list                 print the client table
   validate             check names, editions, add-on rules, port collisions
   next-ports           print the next free frontend/api/postgres triplet
@@ -207,6 +208,156 @@ def cmd_new(args):
           f"ansible-playbook playbooks/create-instance.yml -e client={args.name}")
 
 
+# ── `set`: change an existing entry in place ─────────────────────────────
+# Line-targeted, NOT a yaml round-trip. safe_dump would rewrite the whole file
+# and drop every comment in it — and these files carry the audit trail in
+# comments and in prose `notes` (demo.yml's header, educaswiss's offboarding
+# record). So each key is rewritten on its own line and the rest of the file is
+# returned untouched.
+#
+# What `set` deliberately CANNOT change, and who owns it instead:
+#   name       the file name, the subdomain label and the Linux account suffix
+#              all at once — that is migrate-instance.yml, not an edit
+#   host       moving an instance is migrate-host.yml; editing this field alone
+#              would only point the playbooks at a machine holding nothing
+#   status     suspend-instance.yml / remove-instance.yml own the lifecycle
+#   ports      allocated globally unique here; a hand edit invites a collision
+#   registered the onboarding date — a historical fact
+#   notes      a block scalar, and prose: edit the file
+SETTABLE_SCALARS = ("display_name", "contact", "edition", "jira_import",
+                    "max_users", "app_version", "disk_quota_gb",
+                    "monitor_edge_probe")
+
+
+# Always quoted, never left to PyYAML's "quote only when ambiguous" rule: a
+# version is a string that looks like a number. Bare 1.10 loads back as the
+# float 1.1, and create-instance resolves the app repo tag as v{{ app_version }}
+# — so an unquoted 1.10 would deploy v1.1, a different release. PyYAML does
+# quote that particular case today; this does not depend on it, and it keeps
+# the field looking like it does in every existing entry.
+ALWAYS_QUOTED = {"app_version"}
+
+
+def _render(key, value, indent=0):
+    """`key: value` with YAML's own quoting rules, on exactly one line."""
+    if key in ALWAYS_QUOTED and isinstance(value, str):
+        # Quoted by hand, not via safe_dump's default_style, which applies the
+        # style to the KEY as well and yields "'app_version': '1.0.1'".
+        # Doubling is the only escape single-quoted YAML has.
+        return " " * indent + "{}: '{}'".format(key, value.replace("'", "''"))
+    out = yaml.safe_dump({key: value}, default_flow_style=False,
+                         sort_keys=False, allow_unicode=True).rstrip("\n")
+    if "\n" in out:
+        sys.exit(f"cannot set {key}: the value does not fit on one line")
+    return " " * indent + out
+
+
+def _set_scalar(lines, key, value):
+    rendered = _render(key, value)
+    for i, ln in enumerate(lines):
+        if re.match(rf"^{re.escape(key)}:", ln):
+            if ln.split(":", 1)[1].strip()[:1] in (">", "|"):
+                sys.exit(f"cannot set {key}: it is a block scalar — edit the file")
+            lines[i] = rendered
+            return lines
+    # Absent: insert above `ports:` so the allocated block stays at the bottom.
+    for i, ln in enumerate(lines):
+        if ln.startswith("ports:"):
+            return lines[:i] + [rendered] + lines[i:]
+    return lines + [rendered]
+
+
+def _set_resource(lines, key, value):
+    rendered = _render(key, value, indent=2)
+    start = next((i for i, l in enumerate(lines) if re.match(r"^resources:", l)), None)
+    if start is None:
+        block = ["resources:", rendered]
+        for i, ln in enumerate(lines):
+            if ln.startswith("ports:"):
+                return lines[:i] + block + lines[i:]
+        return lines + block
+    for i in range(start + 1, len(lines)):
+        if lines[i] and not lines[i].startswith((" ", "\t")):
+            break                                   # left the resources block
+        if re.match(rf"^\s+{re.escape(key)}:", lines[i]):
+            lines[i] = rendered
+            return lines
+    else:
+        i = len(lines)
+    return lines[:i] + [rendered] + lines[i:]
+
+
+def cmd_set(args):
+    path = CLIENTS_DIR / f"{args.name}.yml"
+    if not path.exists():
+        sys.exit(f"{path} does not exist — scaffold it with "
+                 f"`ledger.py new {args.name} …`")
+    lines = path.read_text().split("\n")
+    before = yaml.safe_load("\n".join(lines)) or {}
+
+    scalars = {
+        "display_name": args.display, "contact": args.contact,
+        "edition": args.edition, "jira_import": args.jira_import,
+        "max_users": args.max_users, "app_version": args.app_version,
+        "disk_quota_gb": args.disk_quota_gb,
+        "monitor_edge_probe": args.monitor_edge_probe,
+    }
+    resources = {"memory_max": args.memory_max, "cpu_quota": args.cpu_quota,
+                 "tasks_max": args.tasks_max}
+    if all(v is None for v in {**scalars, **resources}.values()):
+        sys.exit("nothing to change — pass at least one field to set")
+
+    for key, value in scalars.items():
+        if value is not None:
+            lines = _set_scalar(lines, key, value)
+    for key, value in resources.items():
+        if value is not None:
+            lines = _set_resource(lines, key, value)
+
+    after = yaml.safe_load("\n".join(lines)) or {}
+
+    # The same rules `validate` applies, checked against the RESULT rather than
+    # the flags: a field left alone can still be made invalid by one that moved
+    # (raising status is not settable here, but edition/contact interact).
+    errors = []
+    if after.get("edition") not in EDITIONS:
+        errors.append(f"edition must be one of {sorted(EDITIONS)}")
+    if after.get("status") == "active" and not EMAIL_RE.match(
+            str(after.get("contact") or "").strip()):
+        errors.append(f"contact {after.get('contact')!r} is not an email address, "
+                      f"and this client is active — it is the login of the "
+                      f"instance's first SUPER_ADMIN")
+    if not isinstance(after.get("max_users"), int) or after["max_users"] < 1:
+        errors.append("max_users must be a positive integer")
+    for k in ("jira_import", "monitor_edge_probe"):
+        if k in after and not isinstance(after[k], bool):
+            errors.append(f"{k} must be true or false")
+    if "disk_quota_gb" in after and (not isinstance(after["disk_quota_gb"], int)
+                                     or after["disk_quota_gb"] < 1):
+        errors.append("disk_quota_gb must be a positive integer")
+    for k, v in (after.get("resources") or {}).items():
+        if k not in RESOURCE_KEYS:
+            errors.append(f"unknown resources key {k!r}")
+        elif not RESOURCE_KEYS[k].match(str(v)):
+            errors.append(f"resources.{k}={v!r} has an invalid format")
+    if errors:
+        for e in errors:
+            print(f"ERROR {e}", file=sys.stderr)
+        sys.exit(f"{path} NOT written")
+
+    path.write_text("\n".join(lines))
+
+    changed = [(k, before.get(k), after.get(k))
+               for k in sorted(set(before) | set(after))
+               if before.get(k) != after.get(k)]
+    if not changed:
+        print(f"{path}: no change")
+        return
+    print(f"wrote {path}")
+    for k, old, new in changed:
+        print(f"  {k}: {old!r} -> {new!r}")
+
+
 def cmd_list(_args):
     clients = load_clients()
     if not clients:
@@ -340,8 +491,8 @@ def main():
     p_new.add_argument("--edition", choices=sorted(EDITIONS), required=True)
     p_new.add_argument("--jira-import", action=argparse.BooleanOptionalAction,
                        default=None,
-                       help="book the Jira-CSV-import add-on (default: booked, "
-                            "except for the team edition, which can never have it)")
+                       help="book the Jira-CSV-import add-on (default: booked — "
+                            "it is part of every subscription)")
     p_new.add_argument("--max-users", type=int, default=25)
     p_new.add_argument("--app-version", default=None)
     p_new.add_argument("--host", default=None,
@@ -350,6 +501,27 @@ def main():
     p_new.add_argument("--disk-quota-gb", type=int, default=10,
                        help="disk quota for the client account in GB (default 10)")
     p_new.set_defaults(func=cmd_new)
+
+    # Every field optional and defaulting to None: only what is passed changes,
+    # so the caller (reconfigure-instance.yml's dialog) can send just the
+    # answers the operator actually gave.
+    p_set = sub.add_parser("set", help="change fields of an existing client file")
+    p_set.add_argument("name")
+    p_set.add_argument("--display", default=None)
+    p_set.add_argument("--contact", default=None)
+    p_set.add_argument("--edition", choices=sorted(EDITIONS), default=None)
+    p_set.add_argument("--jira-import", action=argparse.BooleanOptionalAction,
+                       default=None)
+    p_set.add_argument("--max-users", type=int, default=None)
+    p_set.add_argument("--app-version", default=None)
+    p_set.add_argument("--disk-quota-gb", type=int, default=None)
+    p_set.add_argument("--monitor-edge-probe", action=argparse.BooleanOptionalAction,
+                       default=None,
+                       help="probe the client's public /health from the monitor")
+    p_set.add_argument("--memory-max", default=None, help="e.g. 4G")
+    p_set.add_argument("--cpu-quota", default=None, help="e.g. 300%% (100%% = one core)")
+    p_set.add_argument("--tasks-max", type=int, default=None)
+    p_set.set_defaults(func=cmd_set)
 
     sub.add_parser("list", help="print the client table").set_defaults(func=cmd_list)
     sub.add_parser("validate", help="validate all ledger entries").set_defaults(func=cmd_validate)

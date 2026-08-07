@@ -65,7 +65,19 @@ file (remove it once live). Verify: `curl -s https://acme.octbase.io/health`.
 
 Edit the ledger file → `validate` → commit → re-run
 `create-instance.yml -e client=<name>` (idempotent; re-applies ledger- and
-platform-managed settings, never touches secrets or data). Seats only:
+platform-managed settings, never touches secrets or data).
+
+`reconfigure-instance.yml -e client=<name>` does all of that interactively:
+shows each current value, asks for each (empty keeps it), writes via
+`ledger.py set` — a line edit, so comments and `notes` survive — then re-runs
+the setup. It refuses a non-active client and will not change `name`, `host`,
+`status` or `ports`; those belong to migrate-instance / migrate-host /
+suspend-remove / the allocator. It also measures the account's real disk usage
+and **warns + pauses if the new quota is below it** (setquota's hard limit does
+not shrink an account, it makes the next write fail). Non-interactive
+equivalent: `ledger.py set <name> --edition … --max-users …`.
+
+Seats only:
 `set-max-users.yml` (restarts the stack — brief downtime). Upload/storage
 limits (`OCTBASE_MAX_UPLOAD_MB`, `OCTBASE_MAX_USER_STORAGE_MB`) are
 deliberately **not** ledger-managed — one-off deals are edited in the
