@@ -3,7 +3,7 @@
 
 # Public base domain; a client "acme" is served at acme.octbase.io.
 #
-# Changed from ocete.ch on 2026-08-06. Every per-client playbook builds
+# Changed on 2026-08-06 (the domain rename). Every per-client playbook builds
 # fqdn = "{{ client }}.{{ base_domain }}", which feeds the edge vhost
 # (caddy-vhost.j2), the instance env (env.j2 → OCTBASE_CORS_ORIGIN and
 # OCTBASE_APP_URL), the registry conf and the unit descriptions. So a run

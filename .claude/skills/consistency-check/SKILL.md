@@ -12,7 +12,7 @@ contracts (C1–C15) and the drift log live in
 read §1 first; this skill is the execution procedure for its §3 checklist.
 
 Three working copies are on this host — the app repo has exactly one checkout
-here (`~/demo.ocete.ch` was the second and is gone; the demo has been a
+here (the legacy demo checkout was the second and is gone; the demo has been a
 ledger-managed client under `oct-demo` since 2026-07-11):
 
 ```bash

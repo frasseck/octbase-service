@@ -19,6 +19,6 @@ ports:
   api: 8111
   postgres: 8112
 notes: >-
-  Platform demo instance. Migrated from /home/claude/demo.ocete.ch into the
-  oct-demo account on 2026-07-11 via migrate-instance.yml (legacy ports
-  8080/8000/5432 stay reserved).
+  Platform demo instance. Migrated from its legacy shared-account checkout
+  under /home/claude (since removed) into the oct-demo account on 2026-07-11
+  via migrate-instance.yml (legacy ports 8080/8000/5432 stay reserved).

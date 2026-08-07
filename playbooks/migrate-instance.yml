@@ -11,9 +11,9 @@
 # the SOURCE (domain, account, path) is asked for interactively — or passed
 # with -e to run unattended:
 #
-#   ansible-playbook playbooks/migrate-instance.yml -e client=demo \
-#       [-e source_fqdn=demo.ocete.ch -e source_user=claude \
-#        -e source_dir_in=/home/claude/demo.ocete.ch -e confirm=demo]
+#   ansible-playbook playbooks/migrate-instance.yml -e client=new \
+#       [-e source_fqdn=old.octbase.io -e source_user=oct-old \
+#        -e source_dir_in=/home/oct-old/octbase -e confirm=new]
 #
 # (source_dir_in, not source_dir: extra vars must name the PROMPTED variable
 # to suppress its prompt — empty or omitted means /home/<account>/<domain>.)

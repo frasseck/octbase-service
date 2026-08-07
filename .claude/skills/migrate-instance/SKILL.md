@@ -70,20 +70,21 @@ ansible-playbook playbooks/migrate-instance.yml -e client=<name>
   (`podman-compose up -d` in the source dir); the edge config is only
   touched in the final tasks of phase 3.
 
-## Worked example: demo.ocete.ch → oct-demo (done 2026-07-11)
+## Worked example: the legacy demo → oct-demo (done 2026-07-11)
 
 Kept because it is the only end-to-end run of this playbook, not because
-anything is outstanding. **The migration is complete**: the demo is a
-ledger-managed client (`ledger/clients/demo.yml`, ports 8110-8112,
-enterprise), it runs under `oct-demo`, and the legacy
-`/home/claude/demo.ocete.ch` checkout has been removed — the old stack's
-ports 8080/8000/5432 stay in `RESERVED_PORTS` regardless.
+anything is outstanding (the run predates the 2026-08-06 domain rename;
+domains below are shown as today's `octbase.io` names). **The migration is
+complete**: the demo is a ledger-managed client (`ledger/clients/demo.yml`,
+ports 8110-8112, enterprise), it runs under `oct-demo`, and the legacy
+shared-account checkout under `/home/claude` has been removed — the old
+stack's ports 8080/8000/5432 stay in `RESERVED_PORTS` regardless.
 
 ```bash
 ansible-playbook playbooks/migrate-instance.yml -e client=demo
-#   Domain to move:  demo.ocete.ch
+#   Domain to move:  demo.octbase.io
 #   Account:         claude
-#   Path:            /home/claude/demo.ocete.ch      # no longer exists
+#   Path:            /home/claude/<legacy demo checkout>   # no longer exists
 ```
 
 What the run needed afterwards, worth knowing for the next migration:
@@ -93,7 +94,7 @@ What the run needed afterwards, worth knowing for the next migration:
    `sed -i 's/^OCTBASE_DEMO_MODE=.*/OCTBASE_DEMO_MODE=true/' ~/octbase/.env
    && systemctl --user restart octbase` — the client compose override passes
    it through with a fail-closed default.
-2. Same domain, so **no DNS change** — verify `https://demo.ocete.ch/health`
+2. Same domain, so **no DNS change** — verify `https://demo.octbase.io/health`
    and a real login through the edge.
 3. **The release process had to move with it.** The app repo's `release`
    skill used to deploy the demo by pulling into that checkout; with the

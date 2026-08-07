@@ -1,40 +1,18 @@
 ---
-# The development server's delta on top of the fleet-host baseline.
-#
-#   ansible-playbook playbooks/setup-ops-host.yml -e target_host=dev01
-#
-# dev01 is a standard fleet host that additionally carries the `claude`
-# development account. Everything that makes it a fleet host —  packages,
-# sshd, firewall, fail2ban, quotas, the edge Caddy, /etc/octbase — is
-# setup-host.yml's, and is NOT repeated here. This playbook only adds what the
-# baseline has no reason to know about, which is why it is a delta and not a
-# second provisioner: one baseline, one place to change it.
-#
-# RUN ORDER — the baseline first, this second:
+# The development server's delta on top of the fleet-host baseline: assert
+# the `claude` account exists (setup-host.yml creates it via admin_users and
+# owns its key, sudo and SSH access), then add the only things the baseline
+# has no reason to know about — linger, and a check that the account has a
+# subordinate id range for rootless podman. The baseline first, this second:
 #
 #   ansible-playbook playbooks/setup-host.yml -e target_host=dev01 \
 #       -e setup_user=<account> -e admin_users='lfrasseck claude' \
 #       -e install_workstation_extras=true -e host_fqdn=dev01.octbase.io
 #   ansible-playbook playbooks/setup-ops-host.yml -e target_host=dev01
 #
-# The baseline run is what CREATES the account: `claude` is passed as an admin
-# user, so it gets its uid, home, /bin/bash, the sudo group, a passwordless
-# sudoers drop-in, the connecting operator's SSH key and an AllowUsers entry —
-# and `install_workstation_extras=true` is what gives the host the browser, Go,
-# Node and gh toolchain the account is for. This playbook asserts that already
-# happened rather than doing any of it a second time, so the account has one
-# owner and a later baseline re-run cannot fight it.
-#
-# What it does NOT do, on purpose:
-#   - create the account, or manage its key, sudo or SSH access — the baseline
-#   - check out any repository. The target host deliberately never talks to
-#     GitHub: deploys rsync from the admin machine (group_vars: octbase_repo,
-#     octbase_git_cache). A checkout here would make the server a git client.
-#   - install Claude Code, or bring up any development stack. Those are a
-#     human's first login, and their .env lives in ~/credentials on the box —
-#     it must never enter this repo.
-#   - place or provision any client. dev01 takes ledger clients like any other
-#     host; that is create-instance.yml, driven by the ledger.
+# It deliberately checks out no repository, brings up no stack and places no
+# client. The full model and reasoning: README.md, "The development host
+# (dev01)"; the in-task comments below carry the operational detail.
 #
 # Idempotent: safe to re-run against an already-configured dev01.
 

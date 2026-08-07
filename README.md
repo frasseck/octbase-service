@@ -44,6 +44,25 @@ compose project name (`octbase`) and the same container names — only the
 **host ports** must be unique, and the ledger allocates those. All ports bind
 to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 
+## The fleet: prod01 and dev01
+
+Two servers, both ordinary members of `octbase_hosts` in
+`inventory/hosts.yml`:
+
+|  | `prod01` | `dev01` |
+|---|---|---|
+| Role | Pure fleet server — client stacks and nothing else | Fleet server **plus** the `claude` development account |
+| Ledger clients | New clients land here by default (`default_client_host`) | `beyags`, `demo` |
+| Provisioned by | `setup-host.yml` | `setup-host.yml` + `setup-ops-host.yml` |
+
+`dev01` is not a second class of machine and not a disposable one: it runs
+real ledger clients, so `install-monitoring.yml` and `install-backup.yml`
+must sweep it exactly as they sweep `prod01`. The only thing that
+distinguishes it is one extra account, and the workstation toolchain that
+account exists for (see [The development host](#the-development-host-dev01)).
+Placement is the ledger's `host:` field; `default_client_host` is `prod01`,
+so putting a client on `dev01` is an explicit choice.
+
 ## Repository layout
 
 | Path | Purpose |
@@ -55,6 +74,8 @@ to `127.0.0.1`; nothing but the edge proxy is reachable from outside.
 | `inventory/hosts.yml.template` | Pristine reference copy of the above — `diff` a mangled inventory against it, or copy it back to start over |
 | `playbooks/tasks/assert-client-host.yml` | Shared pre-flight for every per-client play: the target host must be in the inventory, and the run names the machine it will touch |
 | `playbooks/setup-host.yml` | Provision a **new fleet host** from a stock Ubuntu server (packages, SSH, firewall, edge Caddy) |
+| `playbooks/setup-ops-host.yml` | Delta on that baseline for the development host: linger + rootless-podman checks for the `claude` account |
+| `scripts/setup-octbase-web.sh` | Stand the public `octbase.io` marketing site up on a fleet host (run as root on the host) |
 | `playbooks/vars/host-packages.yml` | The reference host's package capture: baseline / workstation extras / base image |
 | `inventory/group_vars/all/main.yml` | Platform-wide defaults (domain, SMTP relay, source path, …) |
 | `inventory/group_vars/all/vault.yml` | Ansible Vault: the SMTP relay password (`vault.yml.sample` documents it) |
@@ -532,6 +553,43 @@ Then place clients on it via `host: prod2` in their ledger entries.
 Not covered, deliberately: DNS, Ubuntu Pro attachment, and the off-host
 backup sync (`backup_offhost_cmd`).
 
+#### The development host (dev01)
+
+`dev01` carries the `claude` development account on top of the baseline.
+That is a **delta playbook, not a second baseline** — the same pattern as
+`install-monitoring.yml` / `install-backup.yml`: one baseline, one place to
+change it. The baseline first, the delta second:
+
+```bash
+ansible-playbook playbooks/setup-host.yml -e target_host=dev01 \
+    -e setup_user=<account> -e admin_users='lfrasseck claude' \
+    -e install_workstation_extras=true -e host_fqdn=dev01.octbase.io
+ansible-playbook playbooks/setup-ops-host.yml -e target_host=dev01
+```
+
+The **baseline owns the account**: `claude` is passed in `admin_users`, which
+gives it its uid, home, shell, sudo drop-in, SSH key and `AllowUsers` entry —
+and the baseline rebuilds that allow-list from `admin_users` on *every* run,
+so an account created anywhere else would lose its SSH access the next time
+the baseline ran, silently. The delta therefore **asserts** the account
+exists and adds only what the baseline has no reason to know about: linger,
+and a check that a subordinate id range exists for rootless podman. It
+refuses to pick id ranges itself — overlapping ranges give two accounts the
+same namespace ids, so when the entry is missing it stops and prints the
+`usermod` command instead.
+
+`install_workstation_extras=true` is what installs the browser, Go, Node and
+`gh` toolchain the development account exists for; on `prod01` it stays off,
+which is the other visible difference between the two machines.
+
+Deliberately **not** done by either playbook: no repository is checked out on
+the target (the servers never talk to GitHub — deploys rsync from the admin
+machine), no development stack is brought up, and no client is placed.
+Repositories and tooling are a human's first login, by hand; the account's
+own `.env` files live in `~/credentials` on the box and never enter this
+repo. Clients land on `dev01` like on any host: `host: dev01` in the ledger
+entry, then the usual playbooks.
+
 ### Move an instance to another host
 
 Placement is the `host:` field in the ledger (see `inventory/hosts.yml` for
@@ -661,6 +719,37 @@ protect (readiness plan B1 stays open).
 The legacy `backup/backup-octbase.sh` (claude account, 03:30 timer) keeps
 covering the resident dev/demo stacks — it cannot see client accounts'
 containers, which is exactly why the fleet job exists.
+
+## The marketing site (octbase.io)
+
+The public `octbase.io` + `www.octbase.io` site (repo `frasseck/octbase-web`
+— static site + Go contact-form mailer, no dependency on the app) runs on a
+fleet host under its own unprivileged `oct-web` account as a rootless-podman
+stack on loopback port **8120**. That port is reserved in `ledger/ledger.py`
+(`RESERVED_PORTS`) so the client port allocator never hands it out — changing
+it means changing both places (contract C8). The site is not a ledger client;
+it is stood up by a script, run **as root on the host** after
+`setup-host.yml` has laid down the edge Caddyfile:
+
+```bash
+sudo bash scripts/setup-octbase-web.sh --src /path/to/octbase-web  # interactive
+sudo bash scripts/setup-octbase-web.sh --src ... --yes             # non-interactive
+```
+
+The site code is rsynced from a local checkout (`--src`) — the host never
+talks to GitHub, so get the checkout there the way the rest of this toolkit
+does, by rsync from the admin machine. The script creates the `oct-web`
+account (locked password, no SSH), deploys and builds the stack, installs a
+systemd user unit that starts it on boot via linger, verifies the site
+answers on loopback, and only then writes the edge vhost snippet
+(`/etc/octbase/edge/octbase-web.caddy`) — `caddy validate` before reload,
+reverted on failure, the main Caddyfile untouched.
+
+Idempotent: a re-run re-syncs, rebuilds and restarts. It never overwrites an
+existing `.env` (`~oct-web/credentials/.env.octbase-web`, mode 0600 — the
+only copy of the contact-form SMTP secrets); pass `--env-file` to replace it
+deliberately. DNS stays manual, and the site must stay password-free — the
+script warns when either is not the case.
 
 ## Production settings — the compose override
 

@@ -21,8 +21,8 @@ the live host (§2.4; the v1.0.5–v1.0.7 releases had skipped this checklist).
 | # | Contract — what must stay in sync | Defined in | Must match |
 |---|---|---|---|
 | C1 | **Env variable surface**: every `OCTBASE_*` variable's name and default | app repo `.env.example` + code defaults | app `podman-compose.yml` pass-through · this repo `env.j2` + `podman-compose.client.yml` · app `README.md` env table |
-| C2 | **Product limits sold = limits enforced**: min 5 seats, 10 MB/file, 0.5 GB/user | API code defaults (`main.go`: users 5, upload 10, storage 512) | `env.j2` (10/512) · client override fail-closed defaults · `ocete.ch` pricing note (“10 MB per file, 0.5 GB … per user”, “minimum 5 users”) |
-| C3 | **Edition model**: `team \| business \| enterprise`; Jira import = add-on on business only, included in enterprise, never on team | API `OCTBASE_EDITION` / `OCTBASE_OPTION_JIRA_IMPORT` gating | `ledger.py` (`EDITIONS`, add-on rule) · `create-instance.yml` assert · `ocete.ch/pricing.html` (add-on shown only on the Business card) |
+| C2 | **Product limits sold = limits enforced**: min 5 seats, 10 MB/file, 0.5 GB/user | API code defaults (`main.go`: users 5, upload 10, storage 512) | `env.j2` (10/512) · client override fail-closed defaults · `octbase.io` pricing note (“10 MB per file, 0.5 GB … per user”, “minimum 5 users”) |
+| C3 | **Edition model**: `team \| business \| enterprise`; Jira import = add-on on business only, included in enterprise, never on team | API `OCTBASE_EDITION` / `OCTBASE_OPTION_JIRA_IMPORT` gating | `ledger.py` (`EDITIONS`, add-on rule) · `create-instance.yml` assert · the marketing site's `pricing.html` (add-on shown only on the Business card) |
 | C4 | **Version stamping**: a deployed `OCTBASE_APP_VERSION` must correspond to a dated `CHANGELOG.md` release entry | app repo `CHANGELOG.md` (release skill renames `Unreleased`) | `OCTBASE_APP_VERSION` in dev/demo `.env` · `octbase_version` in `inventory/group_vars/all/main.yml` · `app_version` per ledger entry |
 | C5 | **API surface**: served routes = `api/openapi.yaml` = app `README.md` API reference | chi router | `TestEveryRouteIsDocumented` covers routes→spec **only** — a route removed from code is *not* flagged when it lingers in the spec or README; check those by hand |
 | C6 | **Health contract**: `GET /health` returns 200 on the API port *and* through the frontend Caddy (`@backend` matcher) | app repo (API `main.go`, frontend `Caddyfile`) | `create-instance.yml` / `set-max-users.yml` health waits · `check-health.sh` · `monitor-all.sh` edge probe · external uptime checks |
@@ -33,7 +33,7 @@ the live host (§2.4; the v1.0.5–v1.0.7 releases had skipped this checklist).
 | C11 | **Postgres image**: all stacks and the backup restore-test use the same image; the restore-test image is pinned to the **exact** server version (`:18.4`), not the `:18` major tag, and its major must be ≥ the source server's | app `podman-compose.yml` | `backup-octbase.sh` + `backup-fleet.sh` `TEST_IMAGE` defaults · **`backup_test_image` in `group_vars/all/main.yml`, which overrides both** (see D27) · app README quick-start |
 | C14 | **Built image names are per compose project** (`localhost/${COMPOSE_PROJECT_NAME}-api` …): two checkouts of the app repo on one host must never overwrite each other's image tags | app `podman-compose.yml` | dev (`octbase_dev`) vs demo (`octbase`) vs client (`octbase`, one per user namespace) builds |
 | C15 | **Edge proxy targets**: the root-managed edge Caddyfile's `reverse_proxy` targets must match how the stacks bind their frontend ports | `/etc/caddy/Caddyfile` (root) | `FRONTEND_PORT`/`WEB_PORT` values in the three resident `.env` files; currently the edge targets the host's **public IP**, so those three ports must stay on `0.0.0.0` (see §2.1) |
-| C12 | **Public claims = platform facts**: hosting location, data handling, feature/limit statements on `ocete.ch` | privacy policy / terms (legal texts) | marketing copy (features, pricing) · security concept · actual hosting |
+| C12 | **Public claims = platform facts**: hosting location, data handling, feature/limit statements on `octbase.io` | privacy policy / terms (legal texts) | marketing copy (features, pricing) · security concept · actual hosting |
 | C13 | **Deploy source**: `create-instance.yml` deploys the app repo **tag `v<app_version>`** the ledger names, cloned fresh into `octbase_release_cache`. Every `app_version` (and `octbase_version`) must exist as a tag in `octbase_repo` — the play asserts this up front. **Structural, not a convention**: the version selects the code, so it cannot disagree with the stamp it writes (C4) | ledger `app_version` · `inventory/group_vars/all/main.yml` (`octbase_version`) | app repo tags · `create-instance.yml` · *(superseded the hand-managed `octbase_src` working-tree rsync — see D-series note below)* |
 | C16 | **Client registry conf format** (`/etc/octbase/clients.d/<name>.conf`): `NAME`/`USER_ACCT`/`DOMAIN`/`FRONTEND_PORT`/`API_PORT`/`HOME_DIR`/`DISK_QUOTA_GB` (+ optional `EDGE_PROBE`) — sourced as shell variables | `playbooks/templates/client-registry.conf.j2` | `monitor-all.sh` (health, edge, disk) · `backup-fleet.sh` (dump + files) — a key rename must touch all three |
 | C17 | **Instance placement**: a ledger `host:` value must name an entry in `inventory/hosts.yml`; per-client playbooks no-op on every other host, so a wrong value silently deploys nowhere (guarded by an assert + `ledger.py validate`) | `ledger/clients/*.yml` (`host:`) + `default_client_host` in group_vars | `inventory/hosts.yml` host names · the `end_host` guards in every per-client playbook |
@@ -50,7 +50,7 @@ The 2026-07-10 security review added `OCTBASE_JWT_SECRET` and
 public demo API ran with an empty JWT secret (demo-mode fallback key — tokens
 forgeable by anyone who reads the source), non-`Secure` refresh cookies, no
 MFA encryption key, and `OCTBASE_CORS_ORIGIN=http://localhost:8080`.
-**Resolution:** `demo.ocete.ch/.env` got its own strong JWT secret, secure
+**Resolution:** the demo's `.env` got its own strong JWT secret, secure
 cookies, a fresh `OCTBASE_MFA_ENC_KEY`, and the real public origin
 (CORS/app-URL). Because the base compose on `main` doesn't yet thread the
 secure-cookie and CORS env vars, demo now layers an **untracked**
@@ -104,16 +104,16 @@ the `.env` comments mark the exact values to flip afterwards.
 ### D7 — Leftover/duplicated keys in deployed `.env` files — **fixed**
 Marketing-split relics (`WEB_PORT`, real `WEB_SMTP_*` credentials) removed
 from dev's and demo's `.env`; demo's dead `MAILPIT_HTTP_PORT` removed. The
-SMTP credentials now live only in `~/credentials/.env.ocete` (rotation still
+SMTP credentials now live only in the marketing `.env` under `~/credentials/` (rotation still
 worth doing — the old copies sat in two extra files; see §2.1).
 
 ### D8 — Minor nits — **fixed**
 - `ledger.py` `RESERVED_PORTS` now includes 8026 (C8).
 - `_example.yml.sample` reserved-names comment now lists `octbase`, `admin` (C10).
 - Layout tables completed: app `README.md`/`CLAUDE.md` now point at
-  `docs/technical_documentation.md` (+ a catch-all row); `ocete.ch/README.md`
+  `docs/technical_documentation.md` (+ a catch-all row); the marketing repo's `README.md`
   lists all five pages.
-- `ocete.ch` impressum/imprint mixup was a live bug, not just naming:
+- The marketing site's impressum/imprint mixup was a live bug, not just naming:
   `privacy.html`/`terms.html` loaded a non-existent `js/imprint.js` (404 —
   contact-detail deobfuscation never ran), while the file on disk was
   `js/impressum.js`, and `impressum.html` was an unshipped, unlinked
@@ -148,7 +148,7 @@ marketing mailer, and full EN/DE locale parity. New findings, all fixed:
 ### F1 — Prometheus `/metrics` was world-readable through the front door — **fixed everywhere** (dev same day; demo with the v1.0.3 deploy)
 The shipped `octbase-frontend/caddy/Caddyfile` proxied `/metrics` to the API,
 so every deployed stack exposed Go runtime + per-route request metrics
-publicly (verified live on `https://demo.ocete.ch/metrics`).
+publicly (verified live on the demo's public `/metrics`).
 `docs/operations.md` claimed the route was private-range-restricted — but
 that restriction only exists in the standalone `Caddyfile.tls`, which **no
 current deployment uses** (the image's Containerfile ships plain
@@ -229,7 +229,7 @@ touching; that's why check §3/C1 exists.)
    `~/restart.sh` back to plain `podman-compose`); the demo no longer serves
    public `/metrics` (verified) and reports v1.0.3 with migration 26.
 3. **Rotate the marketing SMTP password** — it sat in three files until today.
-4. Edge IP/auth restriction for `dev.ocete.ch`/`demo.ocete.ch` and the other
+4. Edge IP/auth restriction for the dev/demo instances and the other
    organizational items — tracked in the security concept §7.
 
 ## 2.2 Release check 2026-07-11 (v1.0.4)
@@ -240,7 +240,7 @@ C1 (env surface) and C8 (live ports vs `RESERVED_PORTS`) clean;
 `octbase_version` bumped `1.0.3` → `1.0.4` (C4). One new finding:
 
 ### D10 — Demo `.env` stamps the unreleased 1.1.0 (C4) — **closed 2026-07-31, overtaken (§2.7)**
-`~/demo.ocete.ch/.env` was edited to `OCTBASE_APP_VERSION=1.1.0` *after* the
+The legacy demo checkout's `.env` was edited to `OCTBASE_APP_VERSION=1.1.0` *after* the
 v1.0.4 restart (the running stack was started with — and still reports —
 `1.0.4`), so the mis-stamp only bites at the **next** demo restart, which
 would then report a version with no dated changelog entry. Likely a mix-up
@@ -248,21 +248,21 @@ with dev's `.env` (dev now stamps `1.0.4` while its tree is on
 `release_v15`, i.e. the future 1.1.0). **Fix (operator, one line):** set
 `OCTBASE_APP_VERSION=1.0.4` back in the demo's `.env`; no restart needed.
 
-Also noted, no defect: `octbase_src` (`~/dev.ocete.ch`) is currently a dirty
+Also noted, no defect: `octbase_src` (the dev checkout) is currently a dirty
 `release_v15` tree — fine between rollouts, but it must be on the released
 commit with a clean tree (C13) before the pending demo migration or any
 client rollout runs.
 
 **Closed 2026-07-31 — the file this defect lives in no longer exists.** The
 demo was migrated out of the shared account into the client model (`oct-demo`,
-ledger `demo.yml`), so there is no `~/demo.ocete.ch/.env` to correct; the
+ledger `demo.yml`), so there is no legacy demo `.env` to correct; the
 prescribed one-line fix has nothing to apply to. The C4 exposure is gone on
 its own terms too: live demo answers `/api/v1/health` with `1.0.10`, which the
 ledger pins and which carries a dated `## v1.0.10 — 2026-07-27` entry. Note
 the closure is *incidental* — the migration overtook the defect rather than
 addressing it, and between 2026-07-11 and the migration a demo restart would
 have done exactly what this entry predicted. The dirty-`octbase_src` note is
-also defused rather than fixed: `~/dev.ocete.ch` is still a dirty tree (on
+also defused rather than fixed: the dev checkout is still a dirty tree (on
 `release_v25`), but since D24 the client path selects code by tag and
 `octbase_src` only feeds `install-monitoring.yml`, so a rollout can no longer
 pick up whatever that checkout happens to hold.
@@ -315,7 +315,7 @@ The `0.0.0.0:8000` API (`version: "beta"`, dev-default CORS, public
 **natively run e2e test API** — `PORT=8000 go run ./cmd/octbase-api` with
 `OCTBASE_DEMO_MODE=true` against a throwaway `octbase_e2e` database on the
 dev Postgres (5433) — started 2026-07-15 05:46 by a dev-session in
-`~/dev.ocete.ch` (Go binds `:8000` on all interfaces by default). No client
+the dev checkout (Go binds `:8000` on all interfaces by default). No client
 or demo data behind it, but demo mode + public binding = seeded logins
 reachable from outside if the firewall allows 8000, and it squats on the
 reserved legacy-demo port. **Fix:** stop it when the e2e run is done; make
@@ -355,7 +355,7 @@ texts now state that every sync run causes a brief restart.
 The app CHANGELOG's latest release is v1.0.7 (2026-07-14) and the demo
 stamps 1.0.7, but group_vars still said 1.0.4 — a new client would have
 been deployed from a 1.0.7+ tree yet report 1.0.4. Bumped to `1.0.7`.
-Also noted: `octbase_src` (`~/dev.ocete.ch`) is currently a **dirty
+Also noted: `octbase_src` (the dev checkout) is currently a **dirty
 `frontend-build-step` tree** — it must be on the released commit with a
 clean tree (C13) before any client rollout.
 
@@ -453,7 +453,7 @@ it deploys. Verification in §2.7.
 
 ### D24 — `create-instance.yml` shipped whatever the admin's checkout held (C13) — **fixed 2026-07-17, structurally**
 Hit for real on the first `beyags` onboarding: the play rsynced `octbase_src`
-(`~/dev.ocete.ch` on the admin machine) as-is, and that checkout was on a
+(the dev checkout on the admin machine) as-is, and that checkout was on a
 commit predating the app's admin bootstrap, so the instance would have come up
 with no way to log in. C13 asked for "released commit, clean tree" and was
 upheld only by hand — nothing read the version, and a live dev checkout is
@@ -713,7 +713,7 @@ stack for the final dump; timers restart on unit change; monitoring deploys
 ## 2.10 Core-script review fixes 2026-08-03 (no contract change)
 
 The same review pass fixed nine defects in the toolkit's scripts (shipped
-with §2.9 in one commit; evidence on OCT-2 at beyags.ocete.ch): both backup
+with §2.9 in one commit; evidence on OCT-2): both backup
 scripts honor `pg_restore`'s exit status in the restore-test verdict, chmod
 their root/dumps to 700/600, remove undersized dumps instead of keeping
 them, and prune the whole backup root so offboarded clients' files age out;
@@ -736,7 +736,7 @@ both prunes sweep emptied per-client directories after files age out.
 
 `octbase_repo` still pointed at a **retired predecessor repository** while the
 product repo had been re-baselined to **`frasseck/octbase-app.git`** on
-2026-08-02 — which `~/dev.ocete.ch`'s origin has tracked ever since.
+2026-08-02 — which the dev checkout's origin has tracked ever since.
 Filed as OCT-24, **repo confirmed correct by Lars 2026-08-04**.
 **Resolution:** octbase-service `2b4de0c` on branch
 `feat/bootstrap-admin-email` (unmerged at time of writing) — `octbase_repo`
@@ -838,7 +838,8 @@ definition. Consequences worth knowing:
   users table is empty, and `.env` is written `force: false`. Changing a
   ledger `contact` later moves the billing/ops contact and nothing else —
   existing instances keep the admin they were born with. `beyags` and `demo`
-  therefore still have `admin@<name>.ocete.ch` logins.
+  therefore still have their original `admin@<name>.…` bootstrap logins
+  on the pre-rename domain.
 - **A blank contact is now a stop, not a gap** (C3). It used to be
   cosmetic; it now decides whether a stack can be logged into. `env.j2` writes
   the email only when the hash is set, so a blank contact would have produced a
@@ -932,7 +933,7 @@ vanishing, which is the intended failure mode.
 ### D29 — a hand-written registry entry poisoned every fleet job (re-measured) — **guard added; host fix needs root**
 
 `/etc/octbase/clients.d/dev.conf` names `oct-dev`, an account that has never
-existed: `dev.ocete.ch` deliberately does **not** follow the client
+existed: the dev stack deliberately does **not** follow the client
 service-setup standard (it runs under the `claude` account with systemd user
 units). The file predates the current registry — dated 2026-07-16, while
 `beyags.conf` and `demo.conf` were rewritten 2026-08-03 — and was never written
@@ -966,8 +967,8 @@ it. Filed as OCT-38.
 
 `/var/log/caddy/access.log`, measured on the host: 79 MB, 43,674 requests since
 2026-07-23, mode **`0644`**, **no logrotate config anywhere**. Of those requests
-**692 carry a credential in the URI** — 361 `beyags.ocete.ch`, 296
-`dev.ocete.ch`, 35 `demo.ocete.ch`. The SPA opens its SSE stream as
+**692 carry a credential in the URI** — 361 beyags, 296 dev, 35 demo
+(pre-rename hostnames). The SPA opens its SSE stream as
 `?token=<access token>` because `EventSource` cannot set an `Authorization`
 header, and Caddy logs the request line verbatim. Access tokens live 15 minutes,
 so old entries are inert; the exposure is continuous, since anything that can
@@ -978,7 +979,7 @@ local account, world-readable is cross-tenant.
 `beyags.caddy` and `demo.caddy` contain no `log` directive, and adapting the
 on-disk config confirms Caddy would put both in the server's `skip_hosts`. They
 are logged anyway. The running config, read from the admin API, maps
-`beyags.ocete.ch → log2` and `demo.ocete.ch → log3`: **Caddy is serving a
+`beyags → log2` and `demo → log3` (pre-rename hostnames): **Caddy is serving a
 configuration that no file on disk describes.** It has been up since
 2026-08-02 14:50, while Ansible rewrote `beyags.caddy` at 2026-08-03 19:02 and
 `demo.caddy` at 18:47 — and nothing reloads the edge. `create-instance.yml`
@@ -1032,15 +1033,15 @@ scripts/check-version-drift.py            # WARN = pinned behind, FAIL = broken 
 
 # C4 — stamps this script cannot see. Dev is the only stack whose .env is
 # readable from here; a managed instance's .env lives in a 0750 client home, so
-# ask its running API instead of the file (`~/demo.ocete.ch` is long gone).
+# ask its running API instead of the file (the legacy demo checkout is long gone).
 grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev
-for h in dev demo beyags; do printf '%-8s %s\n' "$h" "$(curl -s https://$h.ocete.ch/api/v1/health)"; done
+for h in dev demo beyags; do printf '%-8s %s\n' "$h" "$(curl -s https://$h.octbase.io/api/v1/health)"; done
 
 # C13 — code parity, not just stamp parity (§2.8): the live schema must equal
 # the migration count of the tag the ledger names, and a route the tag does not
 # ship must 404. A stamp agreeing with a tag proves nothing about the code.
 for c in beyags demo; do
-  curl -s "https://$c.ocete.ch/api/v1/health" | grep -o '"migrationVersion":[0-9]*'
+  curl -s "https://$c.octbase.io/api/v1/health" | grep -o '"migrationVersion":[0-9]*'
 done
 ls $OCTBASE_SRC/octbase-api/migrations/*.up.sql | tail -1   # compare, at that tag
 

@@ -1,12 +1,12 @@
 ---
-# Package inventory of an Octbase fleet host, captured from the production
-# host `prod` (ocete.ch, Ubuntu 26.04 "resolute") on 2026-08-05 from
-# `apt-mark showmanual` + `snap list`.
+# Package inventory of an Octbase fleet host, captured on 2026-08-05 from
+# the original production host — now `dev01` (Ubuntu 26.04 "resolute") —
+# via `apt-mark showmanual` + `snap list`.
 #
 # Every manually-installed package on that host appears in exactly one of the
 # four lists below. Only the first two are ever installed by setup-host.yml —
 # the other two are the record of what makes up the reference host, so that a
-# later "why does prod have X and this host not" question has an answer here
+# later "why does dev01 have X and this host not" question has an answer here
 # instead of needing another archaeology run.
 #
 # Deliberately NOT captured: the ~1100 packages pulled in as dependencies.
@@ -36,11 +36,11 @@ host_baseline_packages:
 
   # Public edge. Ubuntu ships Caddy in universe; on a host with Ubuntu Pro
   # attached the ESM build (same 2.6.2 upstream, security-patched) supersedes
-  # it automatically — which is what prod runs. Neither is a fleet
+  # it automatically — which is what dev01 runs. Neither is a fleet
   # requirement, so this playbook does not attach Pro.
   - caddy
 
-  # Perimeter. nftables is not decorative: fail2ban's banaction on prod is
+  # Perimeter. nftables is not decorative: fail2ban's banaction on dev01 is
   # nftables, so the jail installed below is inert without it.
   - ufw
   - nftables
@@ -62,7 +62,7 @@ host_baseline_packages:
   - lvm2
 
   # Outgoing mail. The fleet monitor's only path to a human is a mail command
-  # (alert_email in group_vars); prod has no MTA at all, which is one of the
+  # (alert_email in group_vars); dev01 has no MTA at all, which is one of the
   # three layers behind OCT-33. Installing the client here does not configure
   # it — that is install-monitoring.yml's job.
   - msmtp
@@ -89,7 +89,7 @@ host_baseline_packages:
   - bash-completion
   - man-db
 
-  # Diagnosis. Every one of these has been reached for on prod while
+  # Diagnosis. Every one of these has been reached for on dev01 while
   # debugging a stack; a host without them turns a five-minute look into an
   # apt install during an incident.
   - htop
@@ -115,7 +115,7 @@ host_baseline_packages:
   - dbus
 
 # ── Installed only with -e install_workstation_extras=true ────────────────
-# prod doubles as a development workstation, and these are the packages that
+# dev01 doubles as a development workstation, and these are the packages that
 # makes it one. A host that only runs client stacks does not need a browser,
 # a Go toolchain or a JS runtime — they are a large attack surface and a
 # large disk footprint for nothing. Kept so the reference host stays
@@ -132,7 +132,7 @@ host_workstation_packages:
   - numactl
   - hdparm
 
-# Snaps on prod that belong with the workstation set. The remaining snaps
+# Snaps on dev01 that belong with the workstation set. The remaining snaps
 # there (bare, core22, core24, gnome-46-2404, gtk-common-themes, mesa-2404,
 # snapd) are bases and platform snaps pulled in automatically by these, and
 # canonical-livepatch comes with Ubuntu Pro — none are listed for that reason.
@@ -143,12 +143,12 @@ host_workstation_snaps:
   - { name: golangci-lint, classic: true }
 
 # ── Reference only — never installed by this playbook ─────────────────────
-# The rest of prod's manual set. These come from the Ubuntu cloud image, the
+# The rest of dev01's manual set. These come from the Ubuntu cloud image, the
 # installer, or the hosting provider, and re-installing them on a host that
 # has already booted is at best a no-op and at worst destructive: grub-*,
 # shim-signed and linux-image-virtual rewrite boot configuration, cloud-init
 # and netplan.io own first-boot networking, and hc-utils/hwctl only exist in
-# the provider's own archive (prod's apt mirror is mirror.hetzner.com — a
+# the provider's own archive (dev01's apt mirror is mirror.hetzner.com — a
 # host elsewhere cannot resolve them at all).
 #
 # If a new host is missing something here that turns out to matter, add it to

@@ -1,38 +1,22 @@
 #!/usr/bin/env bash
 #
-# setup-octbase-web.sh
-# ---------------------------------------------------------------------------
-# Stand the public octbase.io marketing site up on a fresh fleet host: its own
-# unprivileged Linux account (oct-web) running the site as a rootless-podman
-# stack that starts on boot, published on loopback only, with an edge vhost
-# snippet so the root-managed Caddy fronts it.
-#
-#   octbase.io + www.octbase.io  ->  127.0.0.1:8120  (oct-web, rootless podman)
-#
-# 8120 is reserved in ledger/ledger.py (RESERVED_PORTS) precisely so the client
-# port allocator never hands it out. Changing SITE_PORT here means changing it
-# there too — contract C8, see docs/consistency-register.md.
-#
-# Run as root on the target host:
+# setup-octbase-web.sh — stand the public octbase.io marketing site up on a
+# fleet host: the oct-web account, a rootless-podman stack on loopback
+# (127.0.0.1:8120 — reserved in ledger/ledger.py, contract C8), a systemd
+# user unit starting on boot, and an edge vhost snippet. Run as root on the
+# target host, after setup-host.yml has laid down the edge Caddyfile:
 #
 #     sudo bash setup-octbase-web.sh                     # interactive
 #     sudo bash setup-octbase-web.sh --yes               # non-interactive
 #     sudo bash setup-octbase-web.sh --src /path/to/checkout
 #     sudo bash setup-octbase-web.sh --env-file /root/octbase-web.env
 #
-# The site *code* is rsynced from a local directory (--src); this script never
-# talks to GitHub. Get the checkout onto the host the way the rest of this
-# toolkit does — rsync it from the admin machine — then point --src at it.
+# The site code is rsynced from --src; this script never talks to GitHub.
+# Idempotent: a re-run re-syncs, rebuilds and converges the unit and the edge
+# snippet, and NEVER overwrites an existing .env (pass --env-file to replace
+# the SMTP secrets deliberately).
 #
-# Idempotent: safe to re-run. A re-run re-syncs the site, rebuilds, and
-# converges the unit and the edge snippet. It NEVER overwrites an existing
-# .env, so the SMTP secrets survive (pass --env-file to replace them
-# deliberately).
-#
-# Prerequisite: setup-host.yml has run on this host, so the edge Caddyfile and
-# its import of the snippet directory exist. This script owns only the oct-web
-# account, the site stack, and its own edge snippet.
-# ---------------------------------------------------------------------------
+# Full documentation: README.md, "The marketing site (octbase.io)".
 set -euo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
@@ -69,7 +53,7 @@ while [[ $# -gt 0 ]]; do
         -y|--yes)   ASSUME_YES=1; shift;;
         --src)      SRC_DIR="${2:?--src needs a directory}"; shift 2;;
         --env-file) SEED_ENV="${2:?--env-file needs a file}"; shift 2;;
-        -h|--help)  sed -n '2,35p' "$0"; exit 0;;
+        -h|--help)  sed -n '2,19p' "$0"; exit 0;;
         *)          die "unknown argument: $1 (try --help)";;
     esac
 done
