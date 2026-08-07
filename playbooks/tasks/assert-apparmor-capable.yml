@@ -1,0 +1,48 @@
+---
+# When client_apparmor is on, the client's own container runtime must actually
+# be able to apply an AppArmor profile — checked before the compose override
+# that names those profiles reaches the stack.
+#
+# Included by every playbook that installs podman-compose.client.yml.j2
+# (create-instance.yml, sync-instance.yml, set-version.yml), after the client
+# account and its user_env are known:
+#
+#     - name: Check the container runtime can apply the AppArmor profiles
+#       ansible.builtin.include_tasks: tasks/assert-apparmor-capable.yml
+#
+# Why an assert and not a warning: rootless podman does not ignore an
+# unsupported `--security-opt apparmor=…`, it fails the container. So the
+# failure mode here is not "a stack that is not confined" — it is a stack that
+# does not start, and on sync-instance/set-version, a live stack that stops.
+# Better to refuse before the restart than to health-gate the wreckage.
+#
+# The probe is the client's OWN podman, run as the client account. Asking root's
+# podman would answer for a runtime no client stack uses.
+- name: Ask the client's container runtime whether it can apply AppArmor
+  become_user: "{{ linux_user }}"
+  environment: "{{ user_env }}"
+  ansible.builtin.command: podman info --format json
+  register: client_podman_info
+  changed_when: false
+  failed_when: false
+  when: client_apparmor | bool
+
+- name: The container runtime must be able to apply the AppArmor profiles
+  ansible.builtin.assert:
+    that:
+      # .get() rather than a dotted chain: dotted access over a missing key
+      # raises before a trailing `| default(false)` can catch it.
+      - (client_podman_info.rc | default(1)) == 0
+      - (client_podman_info.stdout | default('{}', true) | from_json).get('host', {}).get('security', {}).get('apparmorEnabled', false) | bool
+    fail_msg: >-
+      client_apparmor is on, but {{ linux_user }}'s podman reports
+      AppArmorEnabled=false, so every container in this stack would fail to
+      start with "Apparmor is not enabled on this system". This is what
+      rootless podman always answers: inside its user namespace securityfs is
+      not mounted, and containers/common refuses AppArmor profiles in rootless
+      mode in any case. The profiles setup-host.yml loaded are on the host and
+      unattached until that changes. Set client_apparmor to false in
+      inventory/group_vars/all/main.yml (or -e client_apparmor=false for this
+      run) to deploy the stack the way the fleet runs it today.
+    quiet: true
+  when: client_apparmor | bool

@@ -1,0 +1,99 @@
+# {{ ansible_managed }}
+#
+# AppArmor profile for the fleet monitor — monitoring/monitor-all.sh, installed
+# to /usr/local/lib/octbase/monitor-all.sh by install-monitoring.yml and run as
+# ROOT every five minutes by octbase-monitor.timer, across every client account
+# on this host.
+#
+# Attached BY PATH, so an ad-hoc `sudo /usr/local/lib/octbase/monitor-all.sh
+# --print` is confined exactly like the timer's run.
+#
+# What this profile is: a bound on what a BUG or a subverted helper in the
+# monitor can reach. It cannot write outside its own state directory, cannot
+# mount, cannot load a module, cannot ptrace a client's processes, and cannot
+# read a client's .env — while still reading every home directory, which `du`
+# needs.
+#
+# What it is NOT: a boundary against someone who already writes the registry.
+# /etc/octbase/clients.d/*.conf are root-owned shell fragments the script
+# SOURCES, so whoever can write one already has root on this host.
+#
+# sudo and the MTA run UNCONFINED (Ux) on purpose. sudo immediately drops into
+# a client account's rootless-podman context and the MTA into its own delivery
+# machinery; neither is describable from here, and confining them by inheritance
+# would break monitoring rather than harden it.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile octbase-monitor /usr/local/lib/octbase/monitor-all.sh{{ ' flags=(complain)' if item.mode == 'complain' else '' }} {
+  include <abstractions/base>
+  include <abstractions/bash>
+  include <abstractions/consoles>
+  include <abstractions/nameservice>
+  include <abstractions/openssl>
+  include <abstractions/ssl_certs>
+
+  # Root walking into 0750 client home directories (du -sb).
+  capability dac_read_search,
+  capability dac_override,
+
+  # curl to https://<client>.<domain>/health, plus the DNS that precedes it.
+  # Raw and packet sockets are not part of that and stay denied — netlink is,
+  # because glibc enumerates interfaces over it.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+  network unix stream,
+  network unix dgram,
+  audit deny network inet raw,
+  audit deny network inet6 raw,
+  audit deny network packet,
+
+  # The script itself, its interpreter, and the small tools it drives — all
+  # `ix`, i.e. they keep running under THIS profile. That inheritance is what
+  # makes every restriction below apply to them too.
+  /usr/local/lib/octbase/monitor-all.sh r,
+  /usr/local/lib/octbase/check-health.sh r,
+  /{usr/,}bin/{bash,dash,env,id,curl,du,cut,date,grep,tr,mv,mkdir,hostname,cat,sed,sleep,basename,dirname,readlink,uname,wc} rix,
+
+  # Escape hatches, both immediate hand-offs (see the header).
+  /{usr/,}bin/sudo Ux,
+  /usr/sbin/sendmail Ux,
+  /{usr/,}bin/{msmtp,sendmail,exim4,postdrop} Ux,
+
+  # Host platform configuration and the client registry it iterates.
+  /etc/octbase/ r,
+  /etc/octbase/** r,
+
+  # Its own state: status.json, the last-states file, the per-client du cache.
+  /var/lib/octbase-monitor/ rw,
+  /var/lib/octbase-monitor/** rwk,
+
+  # Every client home, for `du -sb --one-file-system`. Directory reads and file
+  # reads; `du` only stats the files, but a read rule is the honest superset.
+  /home/ r,
+  /home/*/ r,
+  /home/*/** r,
+
+  # …with the client secrets carved back out. The monitor measures sizes; it
+  # has no reason to open a .env, and an attempt is worth an audit line.
+  audit deny /home/*/octbase/.env rw,
+  audit deny /home/*/credentials/** rw,
+  audit deny /var/backups/** rw,
+
+  # Nothing in a health check writes to the kernel's interfaces or the boot
+  # partition, changes the mount table, or inspects another process's memory.
+  deny @{PROC}/sys/** w,
+  deny /sys/** w,
+  deny /boot/** rw,
+  audit deny mount,
+  audit deny umount,
+  audit deny ptrace (trace, read),
+
+  # Site-specific additions (an in-house alerting helper, a different MTA).
+  # Preferred over editing this file, which setup-host.yml rewrites.
+  include if exists <local/octbase-monitor>
+}

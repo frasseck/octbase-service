@@ -1,0 +1,53 @@
+---
+# Apply the Octbase AppArmor policy to hosts that already exist.
+#
+#   ansible-playbook playbooks/install-apparmor.yml                      # whole fleet
+#   ansible-playbook playbooks/install-apparmor.yml -e target_host=prod01  # one host
+#   ansible-playbook playbooks/install-apparmor.yml --check --diff       # dry run
+#
+# Same delta pattern as install-monitoring.yml and install-backup.yml: one
+# baseline (setup-host.yml), one place each piece is implemented, and a
+# playbook that carries just that piece to hosts already in service.
+#
+# WHY THIS EXISTS rather than "just re-run setup-host.yml". That playbook is
+# idempotent and re-running it is supported — but it is the whole baseline, and
+# on a host serving clients it restarts the SSH socket, re-enables the firewall
+# and REWRITES the sshd allow-list from its admin_users answer. Answer that
+# prompt with less than the host currently allows and the next connection is
+# refused. Bringing one new hardening measure to a live host should not put any
+# of that on the table. This playbook touches AppArmor and nothing else.
+#
+# What it does, in full: loads the profile catalogue, writes every profile to
+# /etc/apparmor.d/ (each validated by apparmor_parser BEFORE the file lands),
+# loads the ones that are new or changed, enables the boot-time load, and
+# confines the edge proxy through a caddy.service drop-in.
+#
+# ⚠ The single disruptive moment: the FIRST run on a host writes that drop-in,
+# and a drop-in only reaches a running daemon on a restart — so caddy is
+# restarted once. That is a sub-second gap on every domain the host serves.
+# Later runs leave it alone (the drop-in is unchanged), so this is safe to run
+# as often as you like. To see it coming without doing it, run --check --diff
+# first: the drop-in shows as a change exactly when the restart would follow.
+#
+# Modes come from inventory/group_vars/all/main.yml (apparmor_mode_platform /
+# _edge / _containers) and can be overridden per run, which is how a profile is
+# promoted or backed off:
+#   -e apparmor_mode_edge=enforce
+#   -e apparmor_mode_platform=complain
+#
+# Nothing here deploys or restarts a client stack. The container profiles are
+# loaded and attached to nothing — see playbooks/vars/apparmor-profiles.yml.
+- name: Install the Octbase AppArmor policy
+  # Defaults to the whole fleet, like the other install-* playbooks. Naming a
+  # host is optional here (unlike setup-host.yml, which mandates it) because
+  # the worst this play does to a host is restart its edge proxy once — but a
+  # cautious rollout does one host first, and this is how.
+  hosts: "{{ target_host | default('octbase_hosts') }}"
+  become: true
+
+  vars_files:
+    - vars/apparmor-profiles.yml
+
+  tasks:
+    - name: Deploy and load the AppArmor policy
+      ansible.builtin.include_tasks: tasks/apparmor.yml

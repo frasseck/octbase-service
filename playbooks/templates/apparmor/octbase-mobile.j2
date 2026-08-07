@@ -1,0 +1,71 @@
+# {{ ansible_managed }}
+#
+# AppArmor profile for the CONTAINER `octbase-mobile` of an Octbase stack — the
+# phone-first companion SPA (app repo octbase-mobile/Containerfile: Caddy
+# serving a built static site). It is not published on any host port: the
+# frontend detects mobile user agents and serves this app under /m/ on the same
+# origin, so its only caller is octbase-frontend on the compose network.
+#
+# ⚠ NOTHING WEARS THIS PROFILE YET — see octbase-postgres for why (rootless
+# podman refuses AppArmor); it applies when `client_apparmor: true` finds a
+# runtime that can honour it.
+#
+# Paths below are CONTAINER paths.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile octbase-mobile flags=(attach_disconnected,mediate_deleted{{ ',complain' if item.mode == 'complain' else '' }}) {
+  include <abstractions/base>
+
+  capability net_bind_service,
+  audit deny capability sys_admin,
+  audit deny capability sys_module,
+  audit deny capability sys_ptrace,
+  audit deny capability net_admin,
+  audit deny capability net_raw,
+  audit deny capability mknod,
+
+  # Inbound from octbase-frontend only; outbound to octbase-api for /api.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+  network unix stream,
+  network unix dgram,
+  audit deny network inet raw,
+  audit deny network inet6 raw,
+  audit deny network packet,
+
+  /{usr/,}bin/caddy mr,
+
+  /etc/caddy/ r,
+  /etc/caddy/** r,
+  /usr/share/caddy/ r,
+  /usr/share/caddy/** r,
+  /etc/{hosts,hostname,resolv.conf,nsswitch.conf,localtime,ssl/**} r,
+  @{PROC}/sys/net/core/somaxconn r,
+  owner @{PROC}/@{pid}/{cgroup,limits,maps,mountinfo,stat,status} r,
+  /sys/kernel/mm/transparent_hugepage/hpage_pmd_size r,
+
+  /data/ rw,
+  /data/** rwkl,
+  /config/ rw,
+  /config/** rwkl,
+  owner /tmp/** rwk,
+
+  audit deny /usr/share/caddy/** w,
+  audit deny /etc/** w,
+  audit deny /{usr,bin,sbin,lib,lib64,opt,root,srv}/** w,
+  audit deny /{bin,sbin,usr,lib,lib64,opt,srv,etc,tmp,var,run,home,root}/** x,
+
+  deny @{PROC}/sys/** w,
+  deny /sys/** w,
+  audit deny mount,
+  audit deny umount,
+  audit deny pivot_root,
+  ptrace (trace, read, tracedby, readby) peer=octbase-mobile,
+
+  include if exists <local/octbase-mobile>
+}

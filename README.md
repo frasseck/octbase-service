@@ -73,6 +73,7 @@ so putting a client on `dev01` is an explicit choice.
 | `inventory/hosts.yml` | The production host(s) Ansible connects to |
 | `inventory/hosts.yml.template` | Pristine reference copy of the above — `diff` a mangled inventory against it, or copy it back to start over |
 | `playbooks/tasks/assert-client-host.yml` | Shared pre-flight for every per-client play: the target host must be in the inventory, and the run names the machine it will touch |
+| `playbooks/tasks/assert-apparmor-capable.yml` | Shared pre-flight for the three plays that install the compose override: with `client_apparmor` on, the client's runtime must actually be able to apply a profile |
 | `playbooks/setup-host.yml` | Provision a **new fleet host** from a stock Ubuntu server (packages, SSH, firewall, edge Caddy) |
 | `playbooks/setup-ops-host.yml` | Delta on that baseline for the development host: linger + rootless-podman checks for the `claude` account |
 | `scripts/setup-octbase-web.sh` | Stand the public `octbase.io` marketing site up on a fleet host (run as root on the host) |
@@ -93,7 +94,11 @@ so putting a client on `dev01` is an explicit choice.
 | `playbooks/install-monitoring.yml` | Install the fleet monitor (script + systemd timer) on every host |
 | `playbooks/install-backup.yml` | Install the nightly fleet backup (script + systemd timer) on every host |
 | `playbooks/templates/` | `.env`, systemd user unit + slice drop-in, edge Caddy vhost templates |
-| `playbooks/files/podman-compose.client.yml` | Production compose override (see below) |
+| `playbooks/templates/podman-compose.client.yml.j2` | Production compose override (see below) |
+| `playbooks/install-apparmor.yml` | Carry the AppArmor policy to hosts that already exist, without re-running the baseline |
+| `playbooks/tasks/apparmor.yml` | The policy deployment itself — shared by `setup-host.yml` and `install-apparmor.yml` |
+| `playbooks/templates/apparmor/` | One AppArmor profile per platform component and per container ([below](#apparmor-profiles)) |
+| `playbooks/vars/apparmor-profiles.yml` | Which profiles ship, what each attaches to, and the mode it loads in |
 | `monitoring/monitor-all.sh` | Root-level aggregator that probes every client stack (health + disk) |
 | `monitoring/octbase-monitor.{service,timer}` | systemd units for the 5-minute monitor run |
 | `backup/backup-fleet.sh` | Nightly per-client DB dump + restore test + attachments/`.env` archive |
@@ -563,8 +568,9 @@ the markers: the next run rewrites them. Change the answer instead
 prerequisites, Caddy, fail2ban, quota tooling, diagnosis tools — see
 `playbooks/vars/host-packages.yml`), sets timezone and locale, hardens sshd,
 enables the firewall, configures per-account disk quotas in `fstab`, creates
-`/etc/octbase/{edge,clients.d}` and lays down the edge Caddyfile with the
-`import /etc/octbase/edge/*.caddy` line client vhosts rely on. It is
+`/etc/octbase/{edge,clients.d}`, lays down the edge Caddyfile with the
+`import /etc/octbase/edge/*.caddy` line client vhosts rely on, and loads the
+[AppArmor profiles](#apparmor-profiles) for the platform's components. It is
 idempotent, so it also serves as "bring a hand-built host up to the current
 baseline" — including `prod01` and `dev01`.
 
@@ -582,6 +588,14 @@ Two things to know before the first run:
   numbers true, so enforcement starts after a restart. Until then
   `create-instance.yml` warns that usage is monitored but not enforced —
   which is the state both hosts are in today.
+- **AppArmor policy lands with the baseline.** The run loads nine profiles and
+  restarts the edge proxy once (a sub-second blip, and only when the drop-in
+  that confines it actually changed). Two of them enforce from that moment:
+  the fleet monitor's and the fleet backup's — both of which are installed
+  *afterwards* by their own playbooks, which is fine, a profile simply applies
+  from the first exec of the file it names. On a host that is already in
+  service, carry the policy over with `install-apparmor.yml` instead of
+  re-running this playbook — see [AppArmor profiles](#apparmor-profiles).
 
 Then place clients on it via `host: prod2` in their ledger entries.
 
@@ -798,7 +812,7 @@ always run with the layered override this repo ships:
 podman-compose -f podman-compose.yml -f podman-compose.client.yml up -d
 ```
 
-`playbooks/files/podman-compose.client.yml` turns demo mode **off**, sets the
+`playbooks/templates/podman-compose.client.yml.j2` turns demo mode **off**, sets the
 real CORS origin/secure cookies, passes the edition/add-on/seat variables from
 `.env`, and bind-mounts `~/octbase/attachments` as a **persistent attachments
 volume** (the base compose keeps uploads in the container filesystem, where
@@ -816,6 +830,99 @@ with both files.
   with `podman network inspect octbase_default` inside a client account).
 - Blast radius per client = one Linux account: distinct user namespaces,
   distinct DBs, per-service resource limits from the base compose file.
+- AppArmor confines the platform's own root-run components on every host, and
+  ships policy for every container ([below](#apparmor-profiles)).
+
+### AppArmor profiles
+
+`setup-host.yml` writes nine profiles into `/etc/apparmor.d/` and loads them,
+so a fleet host has the policy from the moment it is provisioned and reloads it
+at every boot. They come from `playbooks/templates/apparmor/`; what each one is
+for is in `playbooks/vars/apparmor-profiles.yml`, and the rules themselves are
+commented at length in the profiles.
+
+**On a host that already exists**, use the delta playbook rather than the
+baseline:
+
+```bash
+ansible-playbook playbooks/install-apparmor.yml                        # whole fleet
+ansible-playbook playbooks/install-apparmor.yml -e target_host=prod01  # one host first
+ansible-playbook playbooks/install-apparmor.yml --check --diff         # see it first
+```
+
+Both entry points run the same `playbooks/tasks/apparmor.yml`, so they cannot
+drift. Re-running the baseline works too and is supported — but it is the
+*whole* baseline, and on a host serving clients it restarts the SSH socket,
+re-enables the firewall and rewrites the sshd allow-list from its
+`admin_users` answer; answer that with less than the host currently allows and
+the next connection is refused. Bringing one hardening measure to a live host
+should not put that on the table.
+
+`install-apparmor.yml` is safe to run repeatedly: a profile is re-loaded only
+when its file changed or the kernel does not hold it. The one disruptive
+moment is the **first** run on a host, which writes the `caddy.service`
+drop-in — and a drop-in only reaches a running daemon on a restart, so Caddy is
+restarted once, a sub-second gap on every domain that host serves. Later runs
+leave it alone. `--check --diff` shows the drop-in as a change exactly when the
+restart would follow.
+
+It is also how a profile's mode is changed, since the mode is baked into the
+file the parser loads:
+
+```bash
+ansible-playbook playbooks/install-apparmor.yml -e apparmor_mode_edge=enforce
+ansible-playbook playbooks/install-apparmor.yml -e apparmor_mode_platform=complain
+```
+
+**Confining something today** — the platform's own root-run components:
+
+| Profile | Confines | Attached by | Mode |
+|---|---|---|---|
+| `octbase-monitor` | `monitor-all.sh` — root, every 5 min, across every client | executable path | `apparmor_mode_platform` (enforce) |
+| `octbase-backup` | `backup-fleet.sh` — root, nightly, every client's dumps and `.env` | executable path | `apparmor_mode_platform` (enforce) |
+| `octbase-edge-caddy` | the public edge proxy | `caddy.service` drop-in | `apparmor_mode_edge` (complain) |
+
+The edge is confined through a unit drop-in rather than a path attachment on
+`/usr/bin/caddy`, because AppArmor resolves an executable's path against the
+container's own root — a path attachment would also catch the Caddy running
+*inside* the frontend, mobile and marketing containers. It starts in **complain**
+mode deliberately: its failure mode is every client domain at once. Read what it
+would have blocked, then promote it:
+
+```bash
+journalctl -k | grep 'apparmor=' | grep octbase-edge-caddy   # ALLOWED = would have denied
+# add anything genuine to /etc/apparmor.d/local/octbase-edge-caddy, then:
+ansible-playbook playbooks/install-apparmor.yml -e apparmor_mode_edge=enforce
+```
+
+Every profile ends with `include if exists <local/<name>>`, so site-specific
+additions (a different MTA, the off-host sync helper `backup_offhost_cmd`
+names) go in `/etc/apparmor.d/local/` and survive the next run — the shipped
+files are rewritten each time.
+
+**Confining nothing yet** — the six container profiles (`octbase-postgres`,
+`-api`, `-frontend`, `-mobile`, `-web`, `-web-mailer`). **Rootless podman
+cannot apply an AppArmor profile at all:**
+
+```
+$ podman info  →  "apparmorEnabled": false, "rootless": true   (the host has AppArmor)
+$ podman run --security-opt apparmor=<any> …
+Error: apparmor profile "<any>" specified, but Apparmor is not enabled on this system
+```
+
+Rootless podman re-execs into a user namespace where securityfs is not mounted,
+so it reports AppArmor unavailable and rejects any profile — and
+`containers/common` refuses profiles in rootless mode in any case, since loading
+one needs root. Client stacks are rootless by design, so these profiles are
+loaded, reviewable and worn by nothing. `client_apparmor: true` in
+`inventory/group_vars/all/main.yml` wires them into the compose override; before
+it does anything, `create-instance.yml` asks the client's own podman and
+**refuses the run** — the failure without that check is not an unconfined stack
+but one that does not start, because podman fails the container rather than
+ignoring the option.
+
+Adding a service to either compose file means adding a profile for it
+(contract C18).
 
 ### Secrets & the SMTP vault
 
@@ -892,6 +999,11 @@ must land **before the first paying client** — is
   filesystem has `usrquota` enabled; on the current host it is monitor-only.
   Decide per host whether to enable `usrquota` on `/home`
   (fleet-concept §3).
+- **Container AppArmor confinement is written but inert**: a profile exists and
+  is loaded for all six containers the platform runs, and nothing wears one —
+  rootless podman rejects AppArmor profiles outright, and rootless is the
+  tenancy model. The host-side profiles (monitor, backup, edge) *do* enforce.
+  See [AppArmor profiles](#apparmor-profiles) and register §2.19.
 - **Image builds**: each client account builds its own images from the synced
   source (~identical work per client). At ~10+ clients, build once and
   distribute via a registry or `podman save|load` — the app repo's CI already

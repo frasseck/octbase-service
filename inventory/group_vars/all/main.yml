@@ -173,6 +173,40 @@ alert_email: "lars@beyags.com"
 # monitor_edge_probe: false in its ledger file).
 edge_probe: true
 
+# ── AppArmor (per host; setup-host.yml) ───────────────────
+# Every fleet host gets the profiles in playbooks/templates/apparmor/ laid down
+# in /etc/apparmor.d/ and loaded. What each is for, and which of them anything
+# actually wears, is documented in playbooks/vars/apparmor-profiles.yml.
+#
+# Mode for the two root-run fleet scripts (monitor-all.sh, backup-fleet.sh),
+# which are attached by executable path. enforce: their failure is loud (a
+# failed unit, a missing alert) and contained to this repo's own components.
+apparmor_mode_platform: enforce
+# Mode for the public edge proxy, confined through a caddy.service drop-in.
+# complain: its failure mode is every client domain at once, and it is the one
+# component here this repo does not own. Read `journalctl -k | grep apparmor=`
+# for a while, add what is genuinely missing to
+# /etc/apparmor.d/local/octbase-edge-caddy, then set this to enforce.
+apparmor_mode_edge: complain
+# Mode for the six container profiles. They are loaded but attached to nothing
+# (see client_apparmor below), so this only matters once something wears them —
+# and the first thing to wear an untested profile should be observing it.
+apparmor_mode_containers: complain
+
+# Wire the per-container profiles into client stacks (podman-compose.client.yml
+# grows a security_opt for each service). OFF, and it is not an oversight:
+#
+# rootless podman cannot apply an AppArmor profile. From inside its user
+# namespace securityfs is not mounted, so `podman info` reports
+# AppArmorEnabled=false and `--security-opt apparmor=<name>` fails with
+# "Apparmor is not enabled on this system"; containers/common also rejects
+# profiles in rootless mode outright. Client stacks are rootless by design —
+# one Linux account per tenant is the whole tenancy model — so turning this on
+# needs a runtime that has changed. create-instance.yml probes the client's own
+# podman and REFUSES rather than deploying a stack whose compose file claims a
+# confinement the runtime dropped on the floor.
+client_apparmor: false
+
 # ── Conventions (rarely changed) ──────────────────────────
 # Linux account prefix; client "acme" runs as user "oct-acme".
 client_user_prefix: "oct-"

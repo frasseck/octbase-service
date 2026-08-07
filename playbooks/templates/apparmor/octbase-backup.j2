@@ -1,0 +1,89 @@
+# {{ ansible_managed }}
+#
+# AppArmor profile for the nightly fleet backup — backup/backup-fleet.sh,
+# installed to /usr/local/lib/octbase/backup-fleet.sh by install-backup.yml and
+# run as ROOT by octbase-fleet-backup.timer.
+#
+# Attached BY PATH, so a hand-run backup is confined like the timer's.
+#
+# This job handles the most sensitive data on the host: every client's database
+# dump and its .env (DB password, JWT/SCM/MFA secrets). The profile keeps that
+# material inside the backup root — the script may read a client's secrets and
+# write them into /var/backups/octbase, and may not write them anywhere else.
+#
+# Deliberately unconfined (Ux), because each hands straight off to machinery
+# this profile cannot describe:
+#   sudo    — enters a client account's rootless-podman context (pg_dump)
+#   podman  — root podman, for the throwaway restore-test Postgres
+#   rclone / rsync / ssh — the optional off-host sync (backup_offhost_cmd).
+#     Anything else you configure there needs a rule; add it to
+#     /etc/apparmor.d/local/octbase-backup rather than editing this file.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile octbase-backup /usr/local/lib/octbase/backup-fleet.sh{{ ' flags=(complain)' if item.mode == 'complain' else '' }} {
+  include <abstractions/base>
+  include <abstractions/bash>
+  include <abstractions/consoles>
+  include <abstractions/nameservice>
+
+  # Root reading into 0750 client home directories (tar of attachments/.env).
+  capability dac_read_search,
+  capability dac_override,
+  # tar preserving ownership on the archive members it reads back.
+  capability fowner,
+  capability fsetid,
+
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+  network unix stream,
+  network unix dgram,
+  audit deny network inet raw,
+  audit deny network inet6 raw,
+  audit deny network packet,
+
+  # The script, its interpreter, and the tools it drives — inherited (ix), so
+  # the rules below bind them as well.
+  /usr/local/lib/octbase/backup-fleet.sh r,
+  /{usr/,}bin/{bash,dash,env,id,date,tee,mkdir,chmod,stat,tr,seq,sleep,tar,find,wc,rm,cut,cat,grep,sed,gzip,basename,dirname,readlink,uname} rix,
+
+  # Escape hatches (see the header).
+  /{usr/,}bin/sudo Ux,
+  /{usr/,}bin/podman Ux,
+  /{usr/,}bin/{rclone,rsync,ssh,scp} Ux,
+
+  # Host platform configuration and the client registry it iterates.
+  /etc/octbase/ r,
+  /etc/octbase/** r,
+
+  # The backup root: dumps, file archives, backup.log. The only place this job
+  # is allowed to put a client's data.
+  /var/backups/ rw,
+  /var/backups/** rwkl,
+
+  # Client data it archives: attachments and the .env. Reading the secrets is
+  # the job; the write rules above are what keep them from going elsewhere.
+  /home/ r,
+  /home/*/ r,
+  /home/*/** r,
+
+  # A dump is streamed through a temporary file by tar/gzip.
+  owner /tmp/** rwk,
+
+  deny @{PROC}/sys/** w,
+  deny /sys/** w,
+  deny /boot/** rw,
+  audit deny /etc/** w,
+  audit deny mount,
+  audit deny umount,
+  audit deny ptrace (trace, read),
+
+  # Site-specific additions — an off-host sync helper that is not rclone/rsync,
+  # a different compression tool. Preferred over editing this file, which
+  # setup-host.yml rewrites on every run.
+  include if exists <local/octbase-backup>
+}

@@ -9,8 +9,33 @@
 # release_v14, but with fail-open blank defaults). This override makes a stack
 # production-safe and wires every ledger-managed variable through from .env
 # with fail-closed defaults.
+#
+# TEMPLATED, not a static file: the security_opt blocks below appear only when
+# client_apparmor is true in group_vars. With it false — the default, and the
+# only thing rootless podman can currently do — the deployed file is what it
+# always was, plus this comment. See the AppArmor section of
+# inventory/group_vars/all/main.yml.
+{% if client_apparmor | bool %}
+#
+# ⚠ AppArmor confinement IS wired in below. podman_compose.py passes each
+# security_opt item verbatim to `podman --security-opt`, so the value has to be
+# podman's `apparmor=<profile>` spelling and NOT docker-compose's
+# `apparmor:<profile>`, which podman-compose only rewrites for the two
+# `:unconfined` special cases. The profiles themselves are laid down on the
+# host by setup-host.yml.
+{% endif %}
 services:
+{% if client_apparmor | bool %}
+  postgres:
+    security_opt:
+      - apparmor=octbase-postgres
+
+{% endif %}
   octbase-api:
+{% if client_apparmor | bool %}
+    security_opt:
+      - apparmor=octbase-api
+{% endif %}
     environment:
       # Production hardening — the API refuses to start without a strong JWT
       # secret once demo mode is off. Fail-closed .env passthrough: env.j2
@@ -53,6 +78,10 @@ services:
       - ./attachments:/data/attachments:U
 
   octbase-frontend:
+{% if client_apparmor | bool %}
+    security_opt:
+      - apparmor=octbase-frontend
+{% endif %}
     environment:
       # X-Forwarded-For repair. Rootless podman NATs the edge proxy's
       # 127.0.0.1 connection, so the frontend Caddy sees a compose-network
@@ -67,3 +96,12 @@ services:
       # octbase_trusted_proxies in group_vars — the API applies that as its
       # own second check on the forwarded chain.
       OCTBASE_FRONTEND_TRUSTED_PROXIES: "${OCTBASE_FRONTEND_TRUSTED_PROXIES:-10.89.0.0/16}"
+{% if client_apparmor | bool %}
+
+  # The mobile SPA needs no production override of its own — it is here only to
+  # carry its profile, which is why this block exists solely under
+  # client_apparmor.
+  octbase-mobile:
+    security_opt:
+      - apparmor=octbase-mobile
+{% endif %}

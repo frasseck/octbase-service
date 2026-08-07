@@ -70,7 +70,7 @@ platform state:
 - **Cross-repo contracts are conventions, not CI.** Before changing env
   variables, ports, editions, limits, versions, or health probing anywhere,
   read `docs/consistency-register.md` — `playbooks/templates/env.j2` and
-  `playbooks/files/podman-compose.client.yml` must track the app repo's
+  `playbooks/templates/podman-compose.client.yml.j2` must track the app repo's
   `.env.example` and compose file (contracts C1/C2), `ledger.py`'s
   `RESERVED_PORTS`/`RESERVED_NAMES`/`EDITIONS` mirror host and product facts
   (C3/C8/C10). Record found drift in the register's §2 with a date.

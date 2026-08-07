@@ -60,6 +60,25 @@ Mapped to RiLi-Webservices sections and the Merkblatt.
   locking down geolocation/camera/microphone.
 - No analytics/tracking/advertising; the marketing site loads no third-party
   resources (privacy by default).
+- **Mandatory access control (AppArmor)** on every fleet host, laid down and
+  loaded by `setup-host.yml` (profiles in
+  `octbase-service/playbooks/templates/apparmor/`). Enforcing today: the two
+  root-run fleet jobs — the monitor, which may not open a client's `.env`, and
+  the nightly backup, which may read every client's secrets but may write them
+  only inside `/var/backups/octbase`. The public edge proxy is confined through
+  a `caddy.service` drop-in and runs in complain mode until its audit log has
+  been read. Neither may mount, load a module, ptrace, or write to procfs/sysfs.
+- **Container confinement is written but not yet enforceable.** A profile
+  exists for all six containers the platform runs (Postgres, API, frontend,
+  mobile, marketing site, mailer) and is loaded on every host, but nothing wears
+  one: rootless podman rejects AppArmor profiles outright — securityfs is not
+  mounted in its user namespace, and `containers/common` refuses them in
+  rootless mode because loading a profile needs root. Since one rootless Linux
+  account per tenant *is* the isolation model (§2), this is a deliberate
+  trade-off rather than an oversight: the tenancy boundary is the user
+  namespace, the resource caps and the loopback binding, with MAC inside the
+  stack still open. Tracked as an open item (§7) and in the consistency
+  register §2.19; the switch (`client_apparmor`) exists and fails closed.
 
 ### 3.3 Authentication & sessions — RiLi 8.2.3 / 8.2.5 / 8.3.3, Merkblatt §4
 - Individually attributable accounts; no shared accounts. JWT-only API
@@ -160,6 +179,14 @@ Tracked here until closed; required by RiLi ch. 6/16/17 and the Merkblatt §3.
       scan** — RiLi 12/33, Merkblatt §4.
 - [ ] **Edge restriction of `test.octbase.io` / `demo.octbase.io`** (IP filter or
       basic-auth) — public demo instances carry known credentials by design.
+- [ ] **Container MAC** — the six container AppArmor profiles (§3.2) are loaded
+      on every host and attached to nothing, because rootless podman rejects
+      them. Closing this means a runtime that can apply a profile rootlessly, or
+      a decision to give up the one-account-per-tenant model, and it is the
+      second, not the first, that would cost more than it buys.
+- [ ] **Promote the edge proxy's profile to enforce** — it ships in complain
+      mode; the gate is reading its audit output on a host that has served real
+      traffic (README, "AppArmor profiles").
 - [ ] **SBOM / dependency inventory** — RiLi 14/19.
 - [ ] **Incident-response plan** — RiLi 13/30.
 - [ ] **Privacy policy** kept aligned with the revDSG (Swiss counsel review of

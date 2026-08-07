@@ -1,0 +1,64 @@
+# {{ ansible_managed }}
+#
+# AppArmor profile for the CONTAINER `mailer` of the marketing stack — the Go
+# contact-form mailer (repo frasseck/octbase-web, mailer/Containerfile: a Go
+# binary at /usr/local/bin/octbase-mailer on ubi9-minimal, listening on 8081
+# for octbase-web and relaying over SMTP).
+#
+# ⚠ NOTHING WEARS THIS PROFILE YET — see octbase-web; the marketing stack's
+# compose file lives in the other repo and carries no security_opt.
+#
+# This container holds the contact form's SMTP credentials (WEB_SMTP_* in
+# ~oct-web/credentials/.env.octbase-web), passed in as environment. It writes
+# nothing at all: no state directory, no logs on disk, no uploads.
+#
+# Paths below are CONTAINER paths.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile octbase-web-mailer flags=(attach_disconnected,mediate_deleted{{ ',complain' if item.mode == 'complain' else '' }}) {
+  include <abstractions/base>
+
+  # Binds 8081 as root inside its own user namespace; needs nothing more.
+  audit deny capability,
+
+  # Inbound from octbase-web; outbound STARTTLS to the relay on 587, and DNS.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+  network unix stream,
+  network unix dgram,
+  audit deny network inet raw,
+  audit deny network inet6 raw,
+  audit deny network packet,
+
+  /usr/local/bin/octbase-mailer mr,
+  /locales/ r,
+  /locales/** r,
+  /opt/app-root/** r,
+  /etc/pki/** r,
+  /etc/{hosts,hostname,resolv.conf,nsswitch.conf,localtime,ssl/**} r,
+  @{PROC}/sys/net/core/somaxconn r,
+  owner @{PROC}/@{pid}/{cgroup,limits,maps,mountinfo,stat,status} r,
+  /sys/kernel/mm/transparent_hugepage/hpage_pmd_size r,
+
+  # Scratch only — and only what this process itself created.
+  owner /tmp/** rwk,
+
+  # It sends mail. It writes no file and runs no program.
+  audit deny /{etc,usr,bin,sbin,lib,lib64,opt,root,srv,var,run,home}/** w,
+  audit deny /{bin,sbin,usr,lib,lib64,opt,srv,etc,tmp,var,run,home,root}/** x,
+  audit deny /etc/{shadow,gshadow,passwd-,shadow-} r,
+
+  deny @{PROC}/sys/** w,
+  deny /sys/** w,
+  audit deny mount,
+  audit deny umount,
+  audit deny pivot_root,
+  ptrace (trace, read, tracedby, readby) peer=octbase-web-mailer,
+
+  include if exists <local/octbase-web-mailer>
+}
