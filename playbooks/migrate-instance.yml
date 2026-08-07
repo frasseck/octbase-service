@@ -518,10 +518,19 @@
       environment: "{{ user_env }}"
       ansible.builtin.shell: |
         set -euo pipefail
-        podman ps -a \
-          --filter label=io.podman.compose.project={{ target_project }} \
-          --filter label=io.podman.compose.service=octbase-api \
-          -q | head -n 1
+        # Both compose label families, like the source resolvers above
+        # (register D32): older podman-compose writes only com.docker.compose.*.
+        cid=""
+        for pkey in io.podman.compose.project com.docker.compose.project; do
+          for skey in io.podman.compose.service com.docker.compose.service; do
+            cid="$(podman ps -a \
+              --filter "label=${pkey}={{ target_project }}" \
+              --filter "label=${skey}=octbase-api" \
+              -q | head -n 1)"
+            if [ -n "${cid}" ]; then break 2; fi
+          done
+        done
+        echo "${cid}"
       args:
         executable: /bin/bash
       register: target_api_cid
@@ -532,10 +541,18 @@
       environment: "{{ user_env }}"
       ansible.builtin.shell: |
         set -euo pipefail
-        podman ps -a \
-          --filter label=io.podman.compose.project={{ target_project }} \
-          --filter label=io.podman.compose.service=postgres \
-          -q | head -n 1
+        # Both compose label families (register D32), as above.
+        cid=""
+        for pkey in io.podman.compose.project com.docker.compose.project; do
+          for skey in io.podman.compose.service com.docker.compose.service; do
+            cid="$(podman ps -a \
+              --filter "label=${pkey}={{ target_project }}" \
+              --filter "label=${skey}=postgres" \
+              -q | head -n 1)"
+            if [ -n "${cid}" ]; then break 2; fi
+          done
+        done
+        echo "${cid}"
       args:
         executable: /bin/bash
       register: target_postgres_cid

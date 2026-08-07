@@ -149,10 +149,16 @@
       environment: "{{ user_env }}"
       ansible.builtin.shell: |
         set -euo pipefail
-        cid="$(podman ps -q \
-          --filter label=io.podman.compose.project=octbase \
-          --filter label=io.podman.compose.service=octbase-api | head -n 1)"
-        [ -n "$cid" ] && podman stop "$cid" || true
+        cid=""
+        for pkey in io.podman.compose.project com.docker.compose.project; do
+          for skey in io.podman.compose.service com.docker.compose.service; do
+            cid="$(podman ps -q \
+              --filter "label=${pkey}=octbase" \
+              --filter "label=${skey}=octbase-api" | head -n 1)"
+            if [ -n "${cid}" ]; then break 2; fi
+          done
+        done
+        [ -n "${cid}" ] && podman stop "${cid}" || true
       args:
         executable: /bin/bash
 
@@ -165,9 +171,16 @@
       environment: "{{ user_env }}"
       ansible.builtin.shell: |
         set -euo pipefail
-        podman ps -q \
-          --filter label=io.podman.compose.project=octbase \
-          --filter label=io.podman.compose.service=postgres | head -n 1
+        cid=""
+        for pkey in io.podman.compose.project com.docker.compose.project; do
+          for skey in io.podman.compose.service com.docker.compose.service; do
+            cid="$(podman ps -q \
+              --filter "label=${pkey}=octbase" \
+              --filter "label=${skey}=postgres" | head -n 1)"
+            if [ -n "${cid}" ]; then break 2; fi
+          done
+        done
+        echo "${cid}"
       args:
         executable: /bin/bash
       register: source_postgres_cid
@@ -426,10 +439,16 @@
       environment: "{{ user_env }}"
       ansible.builtin.shell: |
         set -euo pipefail
-        cid="$(podman ps -q \
-          --filter label=io.podman.compose.project=octbase \
-          --filter label=io.podman.compose.service=octbase-api | head -n 1)"
-        [ -n "$cid" ] && podman stop "$cid" || true
+        cid=""
+        for pkey in io.podman.compose.project com.docker.compose.project; do
+          for skey in io.podman.compose.service com.docker.compose.service; do
+            cid="$(podman ps -q \
+              --filter "label=${pkey}=octbase" \
+              --filter "label=${skey}=octbase-api" | head -n 1)"
+            if [ -n "${cid}" ]; then break 2; fi
+          done
+        done
+        [ -n "${cid}" ] && podman stop "${cid}" || true
       args:
         executable: /bin/bash
 
@@ -441,9 +460,16 @@
       environment: "{{ user_env }}"
       ansible.builtin.shell: |
         set -euo pipefail
-        podman ps -q \
-          --filter label=io.podman.compose.project=octbase \
-          --filter label=io.podman.compose.service=postgres | head -n 1
+        cid=""
+        for pkey in io.podman.compose.project com.docker.compose.project; do
+          for skey in io.podman.compose.service com.docker.compose.service; do
+            cid="$(podman ps -q \
+              --filter "label=${pkey}=octbase" \
+              --filter "label=${skey}=postgres" | head -n 1)"
+            if [ -n "${cid}" ]; then break 2; fi
+          done
+        done
+        echo "${cid}"
       args:
         executable: /bin/bash
       register: target_postgres_cid

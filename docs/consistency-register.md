@@ -1082,6 +1082,34 @@ Until all three land, do not onboard a `team` client expecting the import to
 work — or set `jira_import: false` for that client and revisit after the app
 release.
 
+## 2.16 Offboarding blockers 2026-08-07 — container resolvers vs compose label families (D32)
+
+### D32 — Postgres/API resolvers trusted `io.podman.compose.service` alone — **fixed, pending a real run**
+
+Two `remove-instance.yml` offboarding runs on `prod01` failed the "postgres
+must be up for the final backup" assert; in the second, `octbase_postgres_1`
+was demonstrably running. The resolvers find containers by label, and
+containers keep their **creation-time** labels: only newer podman-compose
+writes the `io.podman.compose.*` family, older versions write only
+`com.docker.compose.*` (dev01's podman-compose 1.5.0 writes both — measured).
+`migrate-instance.yml` already tried both families for the *project* key, but
+every *service* lookup in the toolkit used `io.podman.compose.service` alone:
+`remove-instance.yml` (2 sites), `migrate-host.yml` (2 postgres resolvers + 2
+best-effort API stops — a silent API-stop miss also meant no write-freeze
+during the migration dump), `reset-user-password.yml`,
+`set-max-users.yml` (read-back miss caused a needless restart),
+`migrate-instance.yml`'s own *target*-side resolvers (2 sites — only its
+source side looped both families), and
+`backup-octbase.sh`'s nightly discovery (`PG_LABEL`) — the worst case: on a
+host whose containers lack the io.podman label, the job would have found no
+postgres at all. All sites now try both families (union, deduplicated, in the
+backup script). Not touched: `backup-fleet.sh` addresses postgres by the
+fixed name `octbase_postgres_1` (contract C7 naming), which fails loudly —
+not silently — if the podman-compose naming convention changes again; worth
+a label-based resolve of its own eventually. Evidence and the failing runs:
+OCT-65/OCT-66. Validated with `playbook-check` only (no Ansible on this
+host); "fixed" is confirmed once a real offboarding run passes the assert.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash
