@@ -182,11 +182,25 @@ edge_probe: true
 # which are attached by executable path. enforce: their failure is loud (a
 # failed unit, a missing alert) and contained to this repo's own components.
 apparmor_mode_platform: enforce
-# Mode for the public edge proxy, confined through a caddy.service drop-in.
-# complain: its failure mode is every client domain at once, and it is the one
-# component here this repo does not own. Read `journalctl -k | grep apparmor=`
-# for a while, add what is genuinely missing to
-# /etc/apparmor.d/local/octbase-edge-caddy, then set this to enforce.
+# Attach the edge proxy's profile at all, via a caddy.service drop-in.
+#
+# OFF, and not out of caution: on 2026-08-07 the first real run turned it on and
+# dev01's edge went DOWN. caddy.service is Type=notify; under the drop-in it
+# never signalled readiness, systemd SIGKILLed it at the start timeout, and
+# test.octbase.io and octbase.io stopped answering until the drop-in was removed
+# by hand. The profile was in COMPLAIN mode, which permits everything and only
+# logs, so the mechanism is not understood — see register §2.19a. Until it is,
+# this control does not get to be on by default.
+#
+# The play now reverts the drop-in and restarts caddy unconfined if it will not
+# come up, so turning this on can no longer strand the edge — but do it one host
+# at a time and watch it:
+#   -e apparmor_confine_edge=true -e target_host=dev01
+apparmor_confine_edge: false
+# Mode the edge profile is loaded in, when it is attached at all. complain
+# permits everything and logs; read `journalctl -k | grep apparmor=` for a
+# while, add what is genuinely missing to
+# /etc/apparmor.d/local/octbase-edge-caddy, then consider enforce.
 apparmor_mode_edge: complain
 # Mode for the six container profiles. They are loaded but attached to nothing
 # (see client_apparmor below), so this only matters once something wears them —

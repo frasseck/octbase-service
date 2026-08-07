@@ -1238,6 +1238,56 @@ loadable, not that it is complete. Expect `apparmor="ALLOWED"` audit lines from
 the complain-mode edge profile on the first real run, and read them before
 promoting it to enforce.
 
+## 2.19a Confining the edge proxy took dev01's edge down (2026-08-07) — **OPEN**
+
+The first real run of `install-apparmor.yml` against `dev01` wrote the
+`caddy.service` drop-in (`AppArmorProfile=-octbase-edge-caddy`) and restarted
+caddy. It never came up:
+
+```
+TASK [Restart the edge proxy under its profile]
+fatal: [dev01]: Unable to restart service caddy: Job for caddy.service failed
+       because a timeout was exceeded.
+
+× caddy.service — Active: failed (Result: timeout)
+  Process: ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile
+           (code=killed, signal=KILL)
+  Mem peak: 10.3M   CPU: 99ms
+```
+
+`caddy.service` is `Type=notify`, so systemd waits for `READY=1` and `SIGKILL`s
+at `TimeoutStartSec`. `test.octbase.io` and `octbase.io` stopped answering
+(`beyags.octbase.io` is served elsewhere and was unaffected) until the drop-in
+was removed by hand and caddy restarted.
+
+**The mechanism is not understood, and that is the open part.** The profile is
+in **complain** mode — verified on disk after the failure,
+`profile octbase-edge-caddy flags=(complain)` — and complain permits every
+access and only logs, so an AppArmor denial is not the expected explanation.
+`AppArmorProfile=` is also `-`-prefixed, which makes a missing or unloadable
+profile a no-op rather than a failure. 10.3 MB peak and 99 ms of CPU say the
+process barely started. Whoever picks this up next: the deciding evidence is
+`journalctl -xeu caddy.service -n 60` and
+`journalctl -k | grep 'apparmor=.*octbase-edge-caddy'` from the failed boot,
+neither of which is readable from the unprivileged `claude` account.
+
+Two changes came out of it, both of which would have contained it:
+
+- **`apparmor_confine_edge` defaults to false.** The profile is still deployed
+  and loaded on every host; only the `caddy.service` drop-in waits. A security
+  control that is on by default and empirically stops the fleet's front door is
+  not a trade worth making while the cause is unknown.
+- **The restart is wrapped in a `rescue`** that removes the drop-in, restarts
+  caddy unconfined, and *then* fails the play. The original had it bare, on the
+  reasoning that a restart costs a sub-second blip — which only covers the
+  restart succeeding. It failed, and the play stopped with the edge dead and the
+  drop-in still on disk, so the next boot would have failed the same way. A
+  playbook that hardens a host must not be able to leave it worse than it found
+  it.
+
+Nothing else in the AppArmor work is affected: the nine profiles load, and
+`octbase-monitor` / `octbase-backup` enforce, on dev01 right now.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash

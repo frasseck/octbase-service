@@ -107,17 +107,38 @@
         enabled: true
         state: started
 
-    # The edge proxy is confined through its unit rather than by executable
-    # path — see the header of templates/apparmor/octbase-edge-caddy.j2: a path
-    # attachment on /usr/bin/caddy would also catch the caddy inside the
-    # frontend/mobile/marketing containers.
+    # ── The edge proxy ───────────────────────────────────────────────────
+    # OFF BY DEFAULT since 2026-08-07, when turning it on took dev01's edge
+    # down: caddy.service is Type=notify, and under the drop-in it never
+    # signalled readiness, so systemd SIGKILLed it at the start timeout and
+    # every domain that host served stopped answering. The profile was in
+    # COMPLAIN mode, which should permit everything and log — so the cause is
+    # not understood yet, and shipping a security control that is enabled by
+    # default and empirically breaks the fleet's front door is not a trade
+    # worth making. Register §2.19a has the incident.
+    #
+    # Everything else in this file stays on: the two script profiles enforce,
+    # all nine profiles are loaded. Only the edge attachment waits.
+    #
+    # Turn it on deliberately, one host at a time, and watch it:
+    #   ansible-playbook playbooks/install-apparmor.yml -e target_host=dev01 \
+    #       -e apparmor_confine_edge=true
+    # If caddy will not start under it, the rescue below puts the edge back
+    # before the play exits — that is what was missing the first time.
+    #
+    # It is confined through its unit rather than by executable path — see the
+    # header of templates/apparmor/octbase-edge-caddy.j2: a path attachment on
+    # /usr/bin/caddy would also catch the caddy inside the frontend, mobile and
+    # marketing containers.
     - name: Create the edge proxy's unit drop-in directory
       ansible.builtin.file:
         path: /etc/systemd/system/caddy.service.d
         state: directory
         mode: "0755"
+      when: apparmor_confine_edge | bool
 
     - name: Confine the edge proxy with its profile
+      when: apparmor_confine_edge | bool
       ansible.builtin.copy:
         dest: /etc/systemd/system/caddy.service.d/10-octbase-apparmor.conf
         mode: "0644"
@@ -137,15 +158,57 @@
 
     # A drop-in only reaches the running daemon on a restart — `systemctl reload
     # caddy` re-reads the Caddyfile without re-executing the process, so the
-    # confinement would not apply until the next reboot. Restarting drops
-    # in-flight connections for well under a second; the task only fires when the
-    # drop-in actually changed, so every later run leaves the edge alone.
-    - name: Restart the edge proxy under its profile
-      ansible.builtin.systemd_service:
-        name: caddy
-        daemon_reload: true
-        state: restarted
-      when: caddy_apparmor_dropin.changed
+    # confinement would not apply until the next reboot.
+    #
+    # THE RESCUE IS THE POINT. The first version of this had the restart bare,
+    # on the reasoning that it costs a sub-second blip. That reasoning only
+    # covers the restart SUCCEEDING. When it failed on dev01 the play stopped
+    # with the edge dead and the drop-in still on disk, so every later boot
+    # would have failed the same way — a playbook that hardens a host must not
+    # be able to leave it worse than it found it.
+    - name: Confine the edge proxy, and undo it if the edge will not come up
+      when:
+        - apparmor_confine_edge | bool
+        # default(false): the task that registers this is itself gated on the
+        # flag above, and a skipped task registers a result without `changed`.
+        - caddy_apparmor_dropin.changed | default(false)
+      block:
+        - name: Restart the edge proxy under its profile
+          ansible.builtin.systemd_service:
+            name: caddy
+            daemon_reload: true
+            state: restarted
+
+      rescue:
+        - name: Take the profile back off the edge proxy
+          ansible.builtin.file:
+            path: /etc/systemd/system/caddy.service.d/10-octbase-apparmor.conf
+            state: absent
+
+        - name: Start the edge proxy again, unconfined
+          ansible.builtin.systemd_service:
+            name: caddy
+            daemon_reload: true
+            state: restarted
+
+        # Deliberately still a failure: the edge is serving again, but the
+        # thing this run was asked to do did not work, and a green run would
+        # hide that.
+        - name: The edge proxy would not start under its profile
+          ansible.builtin.fail:
+            msg: >-
+              caddy could not start with AppArmorProfile=-octbase-edge-caddy, so
+              the drop-in has been removed and caddy restarted WITHOUT it — the
+              edge is serving again, and this host is back to where it was
+              before this run. Nothing else was rolled back: the nine profiles
+              are still loaded and the monitor/backup ones still enforce.
+              Diagnose with, as root on {{ inventory_hostname }}:
+              `journalctl -xeu caddy.service -n 60` and
+              `journalctl -k | grep 'apparmor=.*octbase-edge-caddy'`.
+              Note that the profile ships in complain mode, which permits
+              everything and only logs — so a denial is NOT the expected
+              explanation, and the answer is worth writing into register §2.19a
+              before trying again.
 
 # Reported rather than acted on: this is the honest answer to "are the container
 # profiles doing anything", and it is No on every rootless host. Run as the
@@ -178,8 +241,12 @@
     msg: >-
       {{
         ([(octbase_apparmor_profiles | length) ~ ' profiles loaded into /etc/apparmor.d/.',
-          'Enforcing now: monitor-all.sh, backup-fleet.sh (by path) and caddy.service',
-          '  (unit drop-in) — the last one in ' ~ apparmor_mode_edge ~ ' mode.',
+          'Enforcing now: monitor-all.sh and backup-fleet.sh, attached by path.',
+          ('The edge proxy IS confined (' ~ apparmor_mode_edge ~ ' mode) via its unit drop-in.'
+           if apparmor_confine_edge | bool else
+           'The edge proxy is NOT confined: apparmor_confine_edge is off after the'),
+          ('' if apparmor_confine_edge | bool else
+           '  2026-08-07 dev01 outage — register §2.19a. Its profile is loaded, unattached.'),
           'Check what policy is actually rejecting:  journalctl -k | grep apparmor=',
           'Loosen one while tuning:  -e apparmor_mode_platform=complain',
           '',
