@@ -1133,6 +1133,53 @@ header / list / missing-default in group_vars, vault + list-shaped inventory,
 vault + list-ports client files, and the `new`/`set`/`validate`/`list` round
 trip). Evidence: OCT-68.
 
+## 2.18 Admin-machine review 2026-08-07 — dropped SSH ports, no-op stack start, `test` unreserved (D34–D36)
+
+Review prompted by Lars: create/remove-instance "do not work properly when
+executed on the admin machine". Evidence and fixes: OCT-67, OCT-70.
+
+### D34 — merge `2914157` dropped `ansible_port: 1012` from both hosts — **fixed**
+
+The 2026-08-07 07:22 merge resolved the inventory conflict in favour of the
+admin-machine version (`0ac5158`), whose entries were bare `ansible_host:`
+lines — silently deleting the hand-recorded `ansible_port: 1012` from prod01
+AND dev01. sshd listens only on 1012 (verified live on dev01; the deleted
+comment recorded the same for prod01, port 22 closed), so with the committed
+inventory **every** playbook failed at SSH connect before any task ran — and
+nothing self-heals, since `setup-host.yml`, which writes the managed
+connection block, must itself connect first. Both ports re-added with the
+delete-after-setup-host note restored.
+
+### D35 — `remove-instance` could not revive an active-but-dead stack — **fixed, pending a real run**
+
+`octbase.service` is `Type=oneshot` + `RemainAfterExit=yes`, so a unit whose
+containers have died still reports active — and "Start the stopped stack for
+the final backup" used `state: started`, a no-op on an active unit. The
+following assert then failed claiming "no postgres even after starting the
+stack" (nothing was started) and steered the operator toward
+`-e skip_backup=true`, i.e. deleting the only data copy. This is the residual
+half of the OCT-65 educaswiss failure (the label half was D32). Now
+`state: restarted` — safe because the task only runs when the resolver found
+no postgres. The same latent pattern exists in `create-instance.yml`'s
+"Enable and start the stack" (a re-run over an active-but-dead stack no-ops,
+then times out at the health wait); left as-is deliberately, since
+unconditional restart would bounce every healthy client on every idempotent
+re-run, and the health wait fails loudly there.
+
+### D36 — `RESERVED_NAMES` never learned the dev instance's new domain — **fixed**
+
+A live `create-instance` run scaffolded a client literally named `test`;
+`test.octbase.io` has been the dev stack's public domain since the 2026-08-06
+rename, so its DNS/edge follow-up steps would have hijacked that domain (and
+on dev01 the `test.caddy` snippet would duplicate an existing vhost).
+`ledger.py`'s `RESERVED_NAMES` still blocked only the pre-rename label `dev`
+— the mirror-host-facts rule (C8 family). `test` added to `RESERVED_NAMES`
+and to the mirrored literal list in `create-instance.yml`'s ledger assert
+(refusal verified: `ledger.py new test …` exits 1, writes nothing). The
+already-scaffolded `test` ledger entry / half-provisioned `oct-test` account
+live on the admin machine and its target host — offboard with
+`remove-instance.yml` if it was a throwaway.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash

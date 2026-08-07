@@ -125,6 +125,16 @@
         # only copy of the data. Detect that and start the stack just for the
         # dump; the unconditional stop in the teardown below winds it down
         # again either way.
+        #
+        # `restarted`, not `started`: octbase.service is Type=oneshot with
+        # RemainAfterExit=yes, so a unit whose containers have died still
+        # reports active — and `started` on an active unit is a NO-OP, after
+        # which the assert below fails claiming the stack was started when
+        # nothing happened (OCT-65, the educaswiss offboarding). A restart
+        # runs ExecStop (`podman-compose down`, harmless with nothing up)
+        # and then a fresh `up -d`, so it revives both a stopped unit and an
+        # active-but-dead one. Safe here: this task only runs when the
+        # resolver above found no postgres, i.e. the stack is not serving.
         - name: Check whether the client's postgres container is running
           become_user: "{{ linux_user }}"
           environment: "{{ user_env }}"
@@ -153,7 +163,7 @@
             name: octbase
             scope: user
             daemon_reload: true
-            state: started
+            state: restarted
           when:
             - not (skip_backup | default(false) | bool)
             - pg_running.stdout | trim | length == 0
