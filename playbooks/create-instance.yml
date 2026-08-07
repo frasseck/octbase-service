@@ -300,6 +300,23 @@
     admin_email: "{{ client_ledger.contact | default('') | trim | lower }}"
 
   pre_tasks:
+    # First, before anything templates a group_vars value: when group_vars/all
+    # fails to load, ansible-core 2.19 does not stop at startup — the play dies
+    # mid-run on whichever variable happens to be templated first, with an
+    # "is undefined" that reads like a playbook bug (D33's neighbour: it
+    # happened twice on 2026-08-07). Name the actual causes instead.
+    - name: Group vars must be loaded
+      ansible.builtin.assert:
+        that: client_user_prefix is defined
+        fail_msg: >-
+          group_vars/all did not load. Seen causes: the vault password is
+          missing — pass --ask-vault-pass or set ANSIBLE_VAULT_PASSWORD_FILE
+          (required since inventory/group_vars/all/vault.yml exists) — or the
+          run was started outside the repo root, so ansible.cfg (and with it
+          inventory/hosts.yml + its group_vars) was never picked up, or a
+          group_vars file is vault-encrypted that must not be (only vault.yml
+          is; see the register, D33).
+
     - name: Load client ledger entry
       ansible.builtin.include_vars:
         file: "../ledger/clients/{{ client }}.yml"

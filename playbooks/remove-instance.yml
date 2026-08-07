@@ -38,6 +38,21 @@
     ts: "{{ ansible_facts['date_time']['iso8601_basic_short'] }}"
 
   pre_tasks:
+    # First, before anything templates a group_vars value — a failed
+    # group_vars load otherwise surfaces mid-play as a bare "'clients_
+    # registry_dir' is undefined" (2026-08-07). Same guard as create-instance.
+    - name: Group vars must be loaded
+      ansible.builtin.assert:
+        that: client_user_prefix is defined
+        fail_msg: >-
+          group_vars/all did not load. Seen causes: the vault password is
+          missing — pass --ask-vault-pass or set ANSIBLE_VAULT_PASSWORD_FILE
+          (required since inventory/group_vars/all/vault.yml exists) — or the
+          run was started outside the repo root, so ansible.cfg (and with it
+          inventory/hosts.yml + its group_vars) was never picked up, or a
+          group_vars file is vault-encrypted that must not be (only vault.yml
+          is; see the register, D33).
+
     - name: Load client ledger entry
       ansible.builtin.include_vars:
         file: "../ledger/clients/{{ client }}.yml"
