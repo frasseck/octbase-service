@@ -11,7 +11,7 @@ resource caps + disk quotas, fleet monitoring (health + disk) and nightly
 per-client backups. The [README](README.md) is the full reference (layout,
 ledger fields, runbooks); `docs/fleet-concept.md` is the multi-instance /
 multi-host model; `docs/platform-overview.md` maps this repo against the
-other two (`dev.octbase.io`, `octbase.io`). One concern, one
+other two (`test.octbase.io`, `octbase.io`). One concern, one
 owner — link to the authoritative doc rather than copying content between
 repos (see platform-overview §5).
 

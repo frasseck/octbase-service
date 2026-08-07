@@ -81,7 +81,7 @@ is deployed. Then, in this repo:
 1. Bump `octbase_version` in `inventory/group_vars/all/main.yml` (and/or
    `app_version` per ledger entry) — must match a dated entry in the app
    repo's `CHANGELOG.md` (contract C4).
-2. Verify the deploy source: `git -C ~/dev.octbase.io status -sb` must show the
+2. Verify the deploy source: `git -C ~/test.octbase.io status -sb` must show the
    released commit with a **clean tree** — the playbook rsyncs the working
    tree as-is, uncommitted changes included (contract C13).
 3. Admin machine: `create-instance.yml` per active client; the playbook gates

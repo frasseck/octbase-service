@@ -6,9 +6,9 @@ per-client provisioning toolkit); this document is the map of everything
 around it: which repo owns what, what actually runs on the host, how a change
 travels from development to a client instance, and where the authoritative
 documentation for each concern lives.
-**Last reviewed:** 2026-07-15 (deep review, host state re-verified — §2
-updated for the demo/marketing account migrations; last full pass
-2026-07-10).
+**Last reviewed:** 2026-08-07 (partial: §1/§2 checkout paths re-measured on
+`dev01` and §6 updated during the domain-reference scrub — register D31; last
+deep review 2026-07-15, last full pass 2026-07-10).
 
 Its companion, the [consistency register](consistency-register.md), lists the
 cross-repo contracts that must stay in sync — read it before changing env
@@ -19,15 +19,15 @@ platform.
 
 | Working copy (host) | Git repo | Branch policy | What it is |
 |---|---|---|---|
-| `~/dev.octbase.io` | `frasseck/octbase-app` | `release_vN` feature/release branches | **The application monorepo, development checkout.** Go API + desktop frontend + mobile SPA + shared JS + operations probe. Also the default `octbase_src` the client playbooks rsync from. |
-| `~/octbase.io` | `frasseck/octbase-web` | `main` | **The marketing/landing site** — static no-build site + Go contact-form mailer. No dependency on the app. Carries the public pricing, privacy policy, terms and imprint. |
+| `~/test.octbase.io` | `frasseck/octbase-app` | `release_vN` feature/release branches | **The application monorepo, development checkout.** Go API + desktop frontend + mobile SPA + shared JS + operations probe. Also the default `octbase_src` the client playbooks rsync from. |
+| `~/octbase-web` | `frasseck/octbase-web` | `main` | **The marketing/landing site** — static no-build site + Go contact-form mailer. No dependency on the app. Carries the public pricing, privacy policy, terms and imprint. |
 | `~/octbase-service` | `frasseck/octbase-service` | `main` | **This repo** — client ledger, Ansible playbooks, fleet monitoring, host backup. Provisions one production stack per client. |
 
-There is exactly **one** app-repo checkout on the host. `~/demo.ocete.ch` used
-to be a second one — a deployment target that only ever moved by pulling
+There is exactly **one** app-repo checkout on the host. The legacy demo
+deployment used to be a second one — a target that only ever moved by pulling
 `main` — but the public demo became a ledger-managed client instance under its
-own `oct-demo` account on 2026-07-11 (`migrate-instance.yml`), and the
-directory was removed afterwards. Deploy the demo like any other client, from
+own `oct-demo` account on 2026-07-11 (`migrate-instance.yml`), and that
+checkout was removed afterwards. Deploy the demo like any other client, from
 the admin machine, and never by pulling into a checkout on the host.
 
 ## 2. What runs on the host
@@ -45,7 +45,7 @@ the edge vhost snippet.
 |---|---|---|---|---|
 | Marketing `octbase.io` | `oct-web` | `ocete` ¹ | `ocete-web.service` ¹ | web 8120 (loopback) |
 | Demo `demo.octbase.io` | `oct-demo` | `octbase` | `octbase.service` | frontend 8110 · api 8111 · postgres 8112 |
-| Dev `dev.octbase.io` | `claude` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
+| Dev `test.octbase.io` | `claude` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
 | DB backup (legacy, dev only) | `claude` | — | `octbase-backup.timer` (daily 03:30) | — |
 | Client `<name>` | `oct-<name>` | `octbase` (per account) | per-user `octbase.service`, root `octbase-monitor.timer` + `octbase-fleet-backup.timer` (**not yet installed** — register D13) | frontend/api/postgres blocks from 8110, loopback-only |
 
@@ -76,13 +76,12 @@ then run the setup script and update this row. Note the edge currently serves
 snippet; the script refuses to run until that inline block is removed, rather
 than creating a duplicate vhost Caddy would reject.
 
-Also on the host: `~/restart.sh` (stale since the migrations: it still
-rebuilds `~/octbase.io` — no longer the public site — and `cd`s into the
-removed `~/demo.ocete.ch`; use `sync-instance.yml` for the demo instead),
-`~/credentials/` (the real `.env` files for dev and marketing —
-`~/dev.octbase.io/.env` is a symlink into it), `~/backups/` (legacy nightly
-dumps + `backup.log`; covers only what the `claude` account can see, i.e.
-dev — the demo is the fleet backup's job, register D13).
+Also on the host: `~/credentials/` (the real `.env` files for dev and
+marketing — `~/test.octbase.io/.env` is a symlink into it), `~/backups/`
+(legacy nightly dumps + `backup.log`; covers only what the `claude` account
+can see, i.e. dev — the demo is the fleet backup's job, register D13). The
+old `~/restart.sh` was removed with the migrations; deploy the demo with
+`sync-instance.yml`.
 
 **Port binding:** since 2026-07-10 the resident stacks bind Postgres and API
 ports to `127.0.0.1`; the dev frontend (8081) remains on `0.0.0.0` because
@@ -93,7 +92,7 @@ the root-managed edge Caddyfile targets the host's public IP instead of
 instances are fully loopback-bound via `env.j2`. See consistency register C9.
 
 The public edge reverse proxy (root-managed Caddy, outside all four repos)
-terminates TLS for `octbase.io`, `demo.octbase.io`, `dev.octbase.io` and, later,
+terminates TLS for `octbase.io`, `demo.octbase.io`, `test.octbase.io` and, later,
 `<client>.octbase.io`, and forwards to the loopback/host ports above.
 
 ## 3. Inside the app stack (any instance)
@@ -126,7 +125,7 @@ instances always run base + client override.
 
 ## 4. How a change reaches production
 
-1. **Develop** on a `release_vN` branch in `~/dev.octbase.io`; the dev stack
+1. **Develop** on a `release_vN` branch in `~/test.octbase.io`; the dev stack
    runs that working tree. CI (`.github/workflows/ci.yml`) gates lint, tests
    with a coverage floor, the frontend guards and a Playwright e2e run — and
    on every `main` push publishes per-commit images to GHCR
@@ -140,7 +139,7 @@ instances always run base + client override.
 3. **Deploy the demo**: it is a ledger-managed client like any other since
    2026-07-11, so this is `ansible-playbook playbooks/sync-instance.yml -e
    client=demo` from the admin machine (or `set-version.yml` to deploy the
-   ledger's `app_version` tag and stamp it). There is no `~/demo.ocete.ch`
+   ledger's `app_version` tag and stamp it). There is no legacy demo
    checkout to pull into and no `.env` on this host to edit — its `.env` lives
    in the unreadable `oct-demo` home, and `app_version` in
    `ledger/clients/demo.yml` is what stamps the version.
@@ -179,21 +178,23 @@ hosted platform** was *ocete.ch* and became **`octbase.io` on 2026-08-06**
 (subdomains per client, `base_domain` in group_vars).
 
 That rename was carried through everything addressable, in one pass:
-hostnames, the host directories (`~/dev.octbase.io`, `~/octbase.io`), the
-marketing repo (`frasseck/ocete` → `frasseck/octbase-web`), its compose
-project and `~/credentials/.env.octbase-web`, and the systemd unit
-descriptions. Product naming was already `octbase-*` and did not move.
+hostnames, the host directories, the marketing repo (`frasseck/ocete` →
+`frasseck/octbase-web`), its compose project and
+`~/credentials/.env.octbase-web`, and the systemd unit descriptions. Product
+naming was already `octbase-*` and did not move. On 2026-08-07, on Lars's
+instruction, the remaining old-domain references in this repo's docs, skills
+and comments were scrubbed as well — dated history entries were rephrased to
+not carry the domain (the originals are in git history; register §2.15).
 
 **What still says `ocete` is deliberate, and is not a missed replacement:**
 
-- **Dated records** — `docs/consistency-register.md`, CHANGELOG entries and
-  ledger notes describe what was true on the date they were written. Rewriting
-  them would make the audit trail claim a domain that did not exist yet.
-- **`/home/claude/demo.ocete.ch`** — a checkout removed in July 2026. It never
-  existed under the new name, so renaming the references would fabricate a path.
+- **This section** — the one dated record of what the platform used to be
+  called; every other doc links here instead of repeating it.
 - **`~oct-web/`'s copies** — that account still holds `ocete.ch/`,
   `.env.ocete` and `ocete-web.service` from the pre-rename migration. Renaming
-  them needs root; §2's footnote ¹ documents the cleanup.
+  them needs root; §2's footnote ¹ documents the cleanup, and it has to name
+  the real files. Once that cleanup runs, remove the footnote and this bullet.
 
-So a bare `grep -r ocete` is expected to return hits. Read the context before
-"fixing" one — each remaining hit is one of the three cases above.
+Beyond those, dated register entries may still name since-removed artifacts
+that carried the old brand in their filename (e.g. `migrate-ocete-web.sh`).
+Anything else a `grep -r ocete` turns up is a regression — fix it.

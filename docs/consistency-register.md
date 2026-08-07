@@ -29,7 +29,7 @@ the live host (§2.4; the v1.0.5–v1.0.7 releases had skipped this checklist).
 | C7 | **Compose project/container naming**: client stacks use `COMPOSE_PROJECT_NAME=octbase` → containers `octbase_<service>_1` | `env.j2` | `remove-instance.yml` (`podman exec octbase_postgres_1`) · `set-max-users.yml` (compose-service label filter) · `monitor-all.sh` (`--project octbase`) · `backup-fleet.sh` + `migrate-host.yml` (`octbase_postgres_1`, api label filter) |
 | C8 | **Host port registry**: no client port may collide with the dev/demo/marketing stacks | live `.env` files of the three resident stacks | `RESERVED_PORTS` in `ledger.py` (allocation starts at 8110 regardless) |
 | C9 | **Isolation claim**: “all service ports bind to 127.0.0.1, only the edge is public” | [security concept §2](security-data-protection-concept.md) | `env.j2` (`127.0.0.1:<port>` — holds for clients) · dev/demo/marketing `.env` port values (**do not** hold, see D6) |
-| C10 | **Reserved client names**: `www dev mail api octbase admin` (`demo` unreserved 2026-07-11 — the public demo became a ledger-managed instance, `clients/demo.yml` + `migrate-instance.yml`) | `ledger.py` `RESERVED_NAMES` | `create-instance.yml` assert · `_example.yml.sample` comment |
+| C10 | **Reserved client names**: `www dev mail api octbase admin` (`demo` unreserved 2026-07-11 — the public demo became a ledger-managed instance, `clients/demo.yml` + `migrate-instance.yml`) | `ledger.py` `RESERVED_NAMES` | `create-instance.yml` assert · `example.yml.sample` comment |
 | C11 | **Postgres image**: all stacks and the backup restore-test use the same image; the restore-test image is pinned to the **exact** server version (`:18.4`), not the `:18` major tag, and its major must be ≥ the source server's | app `podman-compose.yml` | `backup-octbase.sh` + `backup-fleet.sh` `TEST_IMAGE` defaults · **`backup_test_image` in `group_vars/all/main.yml`, which overrides both** (see D27) · app README quick-start |
 | C14 | **Built image names are per compose project** (`localhost/${COMPOSE_PROJECT_NAME}-api` …): two checkouts of the app repo on one host must never overwrite each other's image tags | app `podman-compose.yml` | dev (`octbase_dev`) vs demo (`octbase`) vs client (`octbase`, one per user namespace) builds |
 | C15 | **Edge proxy targets**: the root-managed edge Caddyfile's `reverse_proxy` targets must match how the stacks bind their frontend ports | `/etc/caddy/Caddyfile` (root) | `FRONTEND_PORT`/`WEB_PORT` values in the three resident `.env` files; currently the edge targets the host's **public IP**, so those three ports must stay on `0.0.0.0` (see §2.1) |
@@ -1011,6 +1011,38 @@ have produced a correct file and no change in behaviour.
 stops client-token logging immediately, because the on-disk vhosts currently
 say `skip_hosts`. The 79 MB of already-logged tokens are expired but should not
 linger: rotate or truncate, and `chmod 0640`.
+
+## 2.15 Suite review 2026-08-07 — pre-rename domain references scrubbed; overview vs host drift (D31)
+
+On Lars's instruction the remaining pre-rename domain references were removed
+across the toolkit — runnable commands and current-state claims now name
+`octbase.io`, and dated history entries (including in this file) were
+rephrased to not carry the old domain. The originals are in git history; this
+supersedes `docs/platform-overview.md` §6's earlier keep-them policy. Two
+kinds of mention deliberately remain: the dated rename anchor in
+platform-overview §6, and the literal names of the `oct-web` account's
+pre-rename artifacts in §2's cleanup runbook (they name real files that
+still exist on the host; scrubbing them would make the cleanup instructions
+wrong).
+
+### D31 — `platform-overview.md` described checkouts that no longer exist — **doc updated; dev-instance state is Lars's**
+
+Measured live on `dev01` 2026-08-07 during the review: the app-repo checkout
+sits at `~/test.octbase.io` (origin `frasseck/octbase-app.git`, `.env` a
+symlink into `~/credentials/.env.dev`); `~/dev.octbase.io` and `~/octbase.io`
+do not exist; `~/restart.sh` is gone; the dev stack's containers are exited
+(~10 h at measurement) with `octbase-dev.service` and `octbase-backup.service`
+in `failed`; and `dev.octbase.io` does not resolve via public DNS (empty
+answer from 1.1.1.1, not a local-resolver artifact), while beyags and demo
+serve normally on `octbase.io`. The overview's §1/§2 tables were updated
+to the measured paths. **Resolved 2026-08-07, Lars: the dev
+instance is `test.octbase.io` now.** The name resolves publicly (A → dev01)
+and the edge terminates TLS for it (502 while the stack is down); references
+across the toolkit were updated the same day (`check-version-drift.py`'s
+default checkout path, CLAUDE.md, the security concept, the readiness plan,
+`ledger.py`/registry comments, platform-overview and two skills). Whether the
+stopped dev stack is intended remains the one open thread; nothing was
+touched on the host.
 
 ## 3. Review checklist (run per release, ~10 minutes)
 

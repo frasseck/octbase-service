@@ -16,8 +16,8 @@ here (the legacy demo checkout was the second and is gone; the demo has been a
 ledger-managed client under `oct-demo` since 2026-07-11):
 
 ```bash
-export OCTBASE_SRC=~/dev.octbase.io     # app repo — the only checkout on the host
-# ~/octbase.io (marketing) · ~/octbase-service (this repo)
+export OCTBASE_SRC=~/test.octbase.io    # app repo — the only checkout on the host
+# ~/octbase-web (marketing) · ~/octbase-service (this repo)
 ```
 
 ## Checklist (from register §3, with interpretation)
@@ -57,7 +57,7 @@ Manual (no grep suffices):
 
 - **C2 limits**: API code defaults (`$OCTBASE_SRC/octbase-api/cmd/octbase-api/main.go`:
   users 5, upload 10 MB, storage 512 MB) vs `env.j2` vs the pricing note on
-  `~/octbase.io/pricing.html` (the marketing repo's `product-claims-check`
+  `~/octbase-web/pricing.html` (the marketing repo's `product-claims-check`
   skill covers the copy side).
 - **C3 editions**: `ledger.py` `EDITIONS` + add-on rule vs the API's
   `OCTBASE_EDITION`/`OCTBASE_OPTION_JIRA_IMPORT` gating vs the Business card

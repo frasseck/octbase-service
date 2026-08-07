@@ -145,10 +145,33 @@
               [empty: booked, except the team edition, which can never have it]
           register: ask_jira
 
+        # ledger.py refuses this combination, but it would only say so after
+        # every remaining question had been answered and discarded.
+        - name: The team edition can never book the Jira import
+          ansible.builtin.assert:
+            that: not (ask_edition.user_input | trim | lower == 'team'
+                       and ask_jira.user_input | trim | lower in ['y', 'yes'])
+            fail_msg: >-
+              The add-on is not bookable on team — it is a business feature and
+              enterprise includes it. Re-run and either choose business, or
+              answer no here.
+            quiet: true
+
         - name: Licensed seats
           ansible.builtin.pause:
             prompt: "Licensed seats (OCTBASE_MAX_USERS) [default: 25]"
           register: ask_seats
+
+        # argparse would reject a non-integer with a usage dump, three prompts
+        # from now.
+        - name: Seats must be a whole number
+          ansible.builtin.assert:
+            that: ask_seats.user_input | trim is match('^[1-9][0-9]*$')
+            fail_msg: >-
+              '{{ ask_seats.user_input | trim }}' is not a seat count. Give a
+              plain number, e.g. 25 — no units.
+            quiet: true
+          when: ask_seats.user_input | trim | length > 0
 
         # Empty omits --host so ledger.py applies default_client_host from
         # group_vars, and prints which host that resolved to.
@@ -160,10 +183,32 @@
               [empty: the platform default]
           register: ask_host
 
+        # The old host names are the likely typo here: `prod` was renamed to
+        # prod01 when the fleet split, so muscle memory produces a name the
+        # inventory no longer has.
+        - name: The host must be one the inventory knows
+          ansible.builtin.assert:
+            that: ask_host.user_input | trim in groups['octbase_hosts']
+            fail_msg: >-
+              '{{ ask_host.user_input | trim }}' is not in inventory/hosts.yml.
+              Known hosts: {{ groups['octbase_hosts'] | join(', ') }}. Leave the
+              answer empty to take the platform default.
+            quiet: true
+          when: ask_host.user_input | trim | length > 0
+
         - name: Disk quota
           ansible.builtin.pause:
             prompt: "Disk quota for the whole client account, in GB [default: 10]"
           register: ask_disk
+
+        - name: The disk quota must be a whole number of GB
+          ansible.builtin.assert:
+            that: ask_disk.user_input | trim is match('^[1-9][0-9]*$')
+            fail_msg: >-
+              '{{ ask_disk.user_input | trim }}' is not a size in GB. Give a
+              plain number, e.g. 10 — no unit suffix.
+            quiet: true
+          when: ask_disk.user_input | trim | length > 0
 
         # Selects the app repo tag AND stamps OCTBASE_APP_VERSION (C4), so the
         # code and the version a client reports cannot drift apart. Empty falls
@@ -174,6 +219,20 @@
               App version to pin this client to, e.g. 1.0.1
               [empty: the platform default from group_vars]
           register: ask_version
+
+        # ledger.py accepts any string here, so this one gets through the
+        # scaffold and fails much later — after the Linux account has been
+        # created — when the release-tag probe looks for a tag built as
+        # v{{ app_version }} and finds 'vv1.0.1'.
+        - name: The app version must be the bare number, without a leading v
+          ansible.builtin.assert:
+            that: ask_version.user_input | trim is match('^[0-9]')
+            fail_msg: >-
+              '{{ ask_version.user_input | trim }}' should be the version
+              alone, e.g. 1.0.1 — the playbook adds the 'v' when it resolves
+              the app repo tag, so a 'v' here becomes v{{ ask_version.user_input | trim }}.
+            quiet: true
+          when: ask_version.user_input | trim | length > 0
 
         - name: Scaffold the ledger entry
           ansible.builtin.command:
