@@ -8,12 +8,12 @@ display_name: Public demo (demo.octbase.io)
 contact: lars@beyags.com
 edition: enterprise
 jira_import: true
-max_users: 25
+max_users: 5
 registered: '2026-07-11'
 status: active
 app_version: '1.0.1'
-host: dev01
-disk_quota_gb: 20
+host: prod01
+disk_quota_gb: 10
 ports:
   frontend: 8110
   api: 8111
