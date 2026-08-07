@@ -44,10 +44,19 @@ trap cleanup EXIT
 # Discovery is scoped to compose-managed postgres services by label — a name
 # grep also matched any unrelated exited container with "postgres" in its
 # name (a scratch run, a renamed experiment) and turned every nightly red
-# until someone removed it. The label is what the playbooks resolve by too.
-PG_LABEL="io.podman.compose.service=postgres"
-mapfile -t ALL_PG < <(podman ps -a --filter "label=$PG_LABEL" --format '{{.Names}}')
-mapfile -t PG_CONTAINERS < <(podman ps --filter "label=$PG_LABEL" --format '{{.Names}}')
+# until someone removed it. The labels are what the playbooks resolve by too.
+# Both compose label families are tried: containers keep their creation-time
+# labels, and only newer podman-compose writes io.podman.compose.* — older
+# versions write only com.docker.compose.* (register D32). Union, deduplicated:
+# a container carrying both families must not be dumped twice.
+PG_LABELS=("io.podman.compose.service=postgres" "com.docker.compose.service=postgres")
+list_pg() { # list_pg [-a] — container names matching either label family
+	for l in "${PG_LABELS[@]}"; do
+		podman ps "$@" --filter "label=$l" --format '{{.Names}}'
+	done | sort -u
+}
+mapfile -t ALL_PG < <(list_pg -a)
+mapfile -t PG_CONTAINERS < <(list_pg)
 if [ "${#ALL_PG[@]}" -eq 0 ]; then
 	log "ERROR: no postgres containers found — nothing to back up"
 	exit 1

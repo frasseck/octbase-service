@@ -7,7 +7,8 @@ around it: which repo owns what, what actually runs on the host, how a change
 travels from development to a client instance, and where the authoritative
 documentation for each concern lives.
 **Last reviewed:** 2026-08-07 (partial: §1/§2 checkout paths re-measured on
-`dev01` and §6 updated during the domain-reference scrub — register D31; last
+`dev01`, §6 updated during the domain-reference scrub — register D31 — and
+§2/§6 de-branded in the same day's second scrub pass, register §2.15; last
 deep review 2026-07-15, last full pass 2026-07-10).
 
 Its companion, the [consistency register](consistency-register.md), lists the
@@ -43,35 +44,30 @@ the edge vhost snippet.
 
 | Stack | Account | Compose project | systemd unit (user) | Host ports |
 |---|---|---|---|---|
-| Marketing `octbase.io` | `oct-web` | `ocete` ¹ | `ocete-web.service` ¹ | web 8120 (loopback) |
+| Marketing `octbase.io` | `oct-web` | pre-rename ¹ | pre-rename ¹ | web 8120 (loopback) |
 | Demo `demo.octbase.io` | `oct-demo` | `octbase` | `octbase.service` | frontend 8110 · api 8111 · postgres 8112 |
 | Dev `test.octbase.io` | `claude` | `octbase_dev` | `octbase-dev.service` | postgres 5433 · api 8001 · frontend 8081 · Mailpit UI 8025 (dev overlay only) |
 | DB backup (legacy, dev only) | `claude` | — | `octbase-backup.timer` (daily 03:30) | — |
 | Client `<name>` | `oct-<name>` | `octbase` (per account) | per-user `octbase.service`, root `octbase-monitor.timer` + `octbase-fleet-backup.timer` (**not yet installed** — register D13) | frontend/api/postgres blocks from 8110, loopback-only |
 
-¹ The `oct-web` account still carries the **pre-rename** names — compose project
-`ocete`, unit `ocete-web.service`, directory `~oct-web/ocete.ch` and
-`.env.ocete`. The 2026-08-06 domain rename covered the `claude` account's
-staging copy (now `~/octbase-web`, project `octbase-web`) but not that account,
-which needs root. Do not "correct" this row until the rename has actually been
-carried out there.
+¹ The `oct-web` account still runs the marketing stack under its
+**pre-rename** compose project, unit, site directory and env-file names — all
+carrying the platform's old brand (verified live 2026-08-07: the containers
+still bear the old project name). The 2026-08-06 domain rename covered the
+`claude` account's staging copy (now `~/octbase-web`, project `octbase-web`)
+but not that account, which needs root. Do not "correct" this row until the
+rename has actually been carried out there.
 
 **Carrying it out.** `scripts/setup-octbase-web.sh` deploys under the *new*
 names (`~oct-web/octbase.io`, `.env.octbase-web`, `octbase-web.service`), so
 running it against this box without cleaning up first would leave the old unit
 enabled alongside the new one — two units driving the same stack on the same
-port. Retire the old one first, as root:
-
-```bash
-runuser -u oct-web -- env XDG_RUNTIME_DIR=/run/user/$(id -u oct-web) \
-    systemctl --user disable --now ocete-web.service
-rm -f ~oct-web/.config/systemd/user/ocete-web.service
-# keep the secrets: the new script reads ~oct-web/credentials/.env.octbase-web
-cp -a ~oct-web/credentials/.env.ocete ~oct-web/credentials/.env.octbase-web
-rm -rf ~oct-web/ocete.ch ~oct-web/credentials/.env.ocete
-```
-
-then run the setup script and update this row. Note the edge currently serves
+port. Retire the old unit, its user-unit file, the old site directory and env
+file first, as root, keeping the secrets (the new script reads
+`~oct-web/credentials/.env.octbase-web`). The literal pre-rename file names
+and the exact command sequence were scrubbed from this doc on 2026-08-07
+(register §2.15) — recover them from this section's git history before running
+the cleanup. Then run the setup script and update this row. Note the edge currently serves
 `octbase.io` from a block **inside** `/etc/caddy/Caddyfile`, not from a
 snippet; the script refuses to run until that inline block is removed, rather
 than creating a duplicate vhost Caddy would reject.
@@ -174,27 +170,22 @@ One concern, one owner — everything else should link, not copy:
 
 The **product** is *Octbase* (`frasseck/octbase-app`, `OCTBASE_*` env prefix,
 `oct-` account prefix, `octbase-*` unit names). The **domain/brand of the
-hosted platform** was *ocete.ch* and became **`octbase.io` on 2026-08-06**
-(subdomains per client, `base_domain` in group_vars).
+hosted platform** is **`octbase.io`**, adopted on 2026-08-06 in a rename from
+the platform's original domain (subdomains per client, `base_domain` in
+group_vars).
 
 That rename was carried through everything addressable, in one pass:
-hostnames, the host directories, the marketing repo (`frasseck/ocete` →
-`frasseck/octbase-web`), its compose project and
+hostnames, the host directories, the marketing repo's rename to
+`frasseck/octbase-web`, its compose project and
 `~/credentials/.env.octbase-web`, and the systemd unit descriptions. Product
 naming was already `octbase-*` and did not move. On 2026-08-07, on Lars's
-instruction, the remaining old-domain references in this repo's docs, skills
-and comments were scrubbed as well — dated history entries were rephrased to
-not carry the domain (the originals are in git history; register §2.15).
+instruction, every mention of the old domain was scrubbed from this repo's
+docs, skills and comments — including, in a second pass the same day, the
+dated history entries and this section's own record of the old name. Git
+history is the only remaining record (register §2.15).
 
-**What still says `ocete` is deliberate, and is not a missed replacement:**
-
-- **This section** — the one dated record of what the platform used to be
-  called; every other doc links here instead of repeating it.
-- **`~oct-web/`'s copies** — that account still holds `ocete.ch/`,
-  `.env.ocete` and `ocete-web.service` from the pre-rename migration. Renaming
-  them needs root; §2's footnote ¹ documents the cleanup, and it has to name
-  the real files. Once that cleanup runs, remove the footnote and this bullet.
-
-Beyond those, dated register entries may still name since-removed artifacts
-that carried the old brand in their filename (e.g. `migrate-ocete-web.sh`).
-Anything else a `grep -r ocete` turns up is a regression — fix it.
+The one place still *carrying* the old brand is live host state, not a
+document: the `oct-web` account's pre-rename artifacts (§2, footnote ¹),
+which need a root cleanup before `scripts/setup-octbase-web.sh` can take
+over. Once that cleanup runs, remove the footnote and this paragraph.
+Any occurrence of the old brand in this repo's files is a regression — fix it.

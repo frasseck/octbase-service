@@ -80,10 +80,19 @@
     - name: Read OCTBASE_MAX_USERS from the running API container
       become_user: "{{ linux_user }}"
       environment: "{{ user_env }}"
-      ansible.builtin.shell: >
-        podman exec
-        "$(podman ps -q --filter label=io.podman.compose.service=octbase-api | head -n1)"
-        printenv OCTBASE_MAX_USERS
+      ansible.builtin.shell: |
+        set -euo pipefail
+        # Both compose label families — older podman-compose writes only
+        # com.docker.compose.* (register D32). A missed match here caused a
+        # needless restart, not a wrong value, but resolve properly anyway.
+        cid=""
+        for skey in io.podman.compose.service com.docker.compose.service; do
+          cid="$(podman ps -q --filter "label=${skey}=octbase-api" | head -n1)"
+          if [ -n "${cid}" ]; then break; fi
+        done
+        podman exec "${cid}" printenv OCTBASE_MAX_USERS
+      args:
+        executable: /bin/bash
       register: running_max_users
       changed_when: false
       failed_when: false
