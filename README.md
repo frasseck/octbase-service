@@ -135,7 +135,7 @@ this tooling only *generates* per-client vhost snippets for it.
 
 One YAML file per client in `ledger/clients/`. The file name is the client
 `name`, which is also the subdomain label and the Linux account suffix.
-See `ledger/clients/_example.yml.sample` for the full field reference:
+See `ledger/clients/example.yml.sample` for the full field reference:
 
 ```yaml
 name: acme                 # → acme.octbase.io, Linux user oct-acme

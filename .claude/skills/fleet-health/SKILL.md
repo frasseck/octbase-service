@@ -65,8 +65,8 @@ podman ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'   # resident stacks 
 |---|---|
 | A client instance | `sudo machinectl shell oct-<name>@` (or ssh) → then the app repo's probe: `~octbase/octbase-operations/check-health.sh`; public edge: `curl -s https://<name>.octbase.io/health` |
 | Demo | A client instance since 2026-07-11 — diagnose it as one (account `oct-demo`), not as a resident stack. There is no legacy demo checkout under `~claude` |
-| Dev (`octbase_dev` project) | `~/dev.octbase.io` checkout → its `stack-health` skill |
-| Marketing site | `~/octbase.io` checkout → its `run-site` skill |
+| Dev (`octbase_dev` project) | `~/test.octbase.io` checkout → its `stack-health` skill |
+| Marketing site | `~/octbase-web` checkout → its `run-site` skill |
 
 The reaction runbook (which layer failed, what to do) is the app repo's
 `octbase-operations/README.md`; don't duplicate it here.
