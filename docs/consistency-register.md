@@ -1042,7 +1042,8 @@ project name), and the root cleanup in overview §2 is still pending.
 
 Measured live on `dev01` 2026-08-07 during the review: the app-repo checkout
 sits at `~/test.octbase.io` (origin `frasseck/octbase-app.git`, `.env` a
-symlink into `~/credentials/.env.dev`); `~/dev.octbase.io` and `~/octbase.io`
+regular file — **not** a symlink into `~/credentials/.env.test`, as this entry
+claimed until 2026-08-08; see D37); `~/dev.octbase.io` and `~/octbase.io`
 do not exist; `~/restart.sh` is gone; the dev stack's containers are exited
 (~10 h at measurement) with `octbase-dev.service` and `octbase-backup.service`
 in `failed`; and `dev.octbase.io` does not resolve via public DNS (empty
@@ -1296,6 +1297,43 @@ Two changes came out of it, both of which would have contained it:
 Nothing else in the AppArmor work is affected: the nine profiles load, and
 `octbase-monitor` / `octbase-backup` enforce, on dev01 right now.
 
+## 2.20 The dev instance's env file was a second copy, not a symlink (2026-08-08)
+
+### D37 — `~/credentials/.env.test` had drifted from the stack's real `.env` — **fixed**
+
+D31 recorded `~/test.octbase.io/.env` as "a symlink into
+`~/credentials/.env.dev`". It is not, and never was on this host: `ls -la`
+shows a regular file (`-rw-------`) and `readlink -f` resolves it to itself.
+Two independent copies, described as one.
+
+They had drifted, in exactly the way that arrangement invites. Measured
+2026-08-08:
+
+| | `OCTBASE_APP_URL` |
+|---|---|
+| `~/test.octbase.io/.env` (what the stack reads) | `https://test.octbase.io` |
+| `~/credentials/.env.test` (the copy people consult) | `https://dev.ocete.ch` |
+| the running `octbase_dev_octbase-api_1` | `https://test.octbase.io` |
+
+`dev.ocete.ch` was retired by the octbase.io rename and no longer answers.
+It was the **only** key whose value differed — the two files were otherwise
+byte-identical, which is why the drift went unnoticed.
+
+**The live stack was never affected**, and the "next `--force-recreate`
+silently reverts it" risk first reported against this was wrong: a recreate
+reads the repo `.env`, which was correct all along. What the stale copy did
+break was anyone who *trusted* it — sourcing it to pick up `TEST_DATABASE_URL`
+exported a dead `OCTBASE_APP_URL`, which is what produced the phantom
+`TestOAuthCallback_StoresTokens` TLS failure chased in octbase-app OCT-24.
+
+Fixed by correcting the one line; all three sources now agree and the two
+files are byte-identical again. The file was also renamed `.env.dev` →
+`.env.test` to match the instance, and the references that name it were
+updated (this register, the `consistency-check` skill, the `octbase-worklog`
+skill). **Still two copies** — making the repo `.env` an actual symlink would
+retire the drift class for good, but that changes how a live stack loads its
+config and was left for Lars.
+
 ## 3. Review checklist (run per release, ~10 minutes)
 
 ```bash
@@ -1324,7 +1362,7 @@ scripts/check-version-drift.py            # WARN = pinned behind, FAIL = broken 
 # C4 — stamps this script cannot see. Dev is the only stack whose .env is
 # readable from here; a managed instance's .env lives in a 0750 client home, so
 # ask its running API instead of the file (the legacy demo checkout is long gone).
-grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev
+grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.test
 for h in dev demo beyags; do printf '%-8s %s\n' "$h" "$(curl -s https://$h.octbase.io/api/v1/health)"; done
 
 # C13 — code parity, not just stamp parity (§2.8): the live schema must equal

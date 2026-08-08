@@ -40,7 +40,7 @@ scripts/check-version-drift.py
 # C4 — stamps this repo's script cannot see. Dev is the only stack left whose
 # .env is readable from here; every managed instance keeps its .env in a 0750
 # client home, so ask the running API instead of the file.
-grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.dev
+grep -h '^OCTBASE_APP_VERSION=' ~/credentials/.env.test
 for h in dev demo beyags; do
   printf '%-8s %s\n' "$h" "$(curl -s https://$h.octbase.io/api/v1/health)"
 done   # version + migrationVersion; compare against ledger app_version
