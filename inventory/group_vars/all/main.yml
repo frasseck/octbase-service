@@ -66,7 +66,13 @@ octbase_release_cache: "{{ lookup('env', 'HOME') }}/.cache/octbase-service/octba
 # octbase-app carries, and it is what beyags and demo actually report at
 # /api/v1/version, so this is the stamps catching up with the fleet rather
 # than a downgrade. Raise it when the app repo tags its next release.
-octbase_version: "1.0.1"
+#
+# 1.0.2 since 2026-08-08 — octbase-app tagged v1.0.2 (annotated e0c5e04 ->
+# 58560b6) with a dated CHANGELOG entry, so C4 and C13 are both satisfied.
+# This is the FLEET DEFAULT only: every active client pins its own app_version,
+# and all four are still on 1.0.1. Rolling them to 1.0.2 is a separate
+# decision — bump the ledger entry, then re-run create-instance.yml per client.
+octbase_version: "1.0.2"
 
 # SMTP relay for outgoing app mail (invitations, password resets,
 # notifications). Until 2026-08-04 smtp_host was empty, which makes the API log
