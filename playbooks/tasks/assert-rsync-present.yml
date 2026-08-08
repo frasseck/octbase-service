@@ -1,0 +1,43 @@
+---
+# Every play that lays source or data across the wire does it with
+# ansible.posix.synchronize, which needs rsync on the TARGET as well as on the
+# admin machine. rsync is part of host_baseline_packages
+# (playbooks/vars/host-packages.yml), so a host that has never had
+# setup-host.yml run against it does not have it — and synchronize then fails
+# from the sender side with
+#
+#     sudo: rsync: command not found
+#     rsync error: error in rsync protocol data stream (code 12)
+#
+# which names neither the host, nor the package, nor the playbook that
+# installs it. Included by every play that syncs (create-instance.yml,
+# set-version.yml, sync-instance.yml, migrate-host.yml), with the other
+# pre-flight guards — i.e. before anything is written to the instance:
+#
+#     - name: Check the target host can receive an rsync
+#       ansible.builtin.include_tasks: tasks/assert-rsync-present.yml
+#
+# The probe runs under the play's become, which is the same sudo path
+# synchronize's `--rsync-path=sudo rsync` takes, so it answers for the rsync
+# the sync will actually invoke rather than for the connecting account's PATH.
+- name: Look for rsync on the target host
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --version
+  register: rsync_probe
+  changed_when: false
+  failed_when: false
+
+- name: The target host must have rsync
+  ansible.builtin.assert:
+    that: rsync_probe.rc == 0
+    fail_msg: >-
+      {{ inventory_hostname }} has no usable rsync, which every source and data
+      sync in this repo needs on the target. It is part of the fleet-host
+      baseline, so this host has not been brought up to that baseline — run
+      `ansible-playbook playbooks/setup-host.yml -e target_host={{ inventory_hostname }}`
+      (README, "Add a host to the fleet"), then re-run this play. Note that run
+      restarts sshd and enables the firewall, so it is a maintenance action on
+      a host already serving traffic. Nothing has been changed on the instance.
+    quiet: true

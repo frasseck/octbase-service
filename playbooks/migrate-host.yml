@@ -102,6 +102,11 @@
       ansible.builtin.meta: end_host
       when: inventory_hostname != source_host
 
+    # The staged dump leaves the source over rsync (below), and phase 2's
+    # create-instance.yml run guards the destination the same way.
+    - name: Check the source host can send an rsync
+      ansible.builtin.include_tasks: tasks/assert-rsync-present.yml
+
     - name: Look up the client account on the source host
       ansible.builtin.getent:
         database: passwd

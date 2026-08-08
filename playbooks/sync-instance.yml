@@ -102,6 +102,9 @@
     - name: Check the container runtime can apply the AppArmor profiles
       ansible.builtin.include_tasks: tasks/assert-apparmor-capable.yml
 
+    - name: Check the target host can receive an rsync
+      ansible.builtin.include_tasks: tasks/assert-rsync-present.yml
+
   tasks:
     # On the ADMIN machine, not the host: the admin account owns the GitHub
     # deploy key (root SSH to GitHub is neither wanted nor set up), exactly as

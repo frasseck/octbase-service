@@ -102,6 +102,9 @@
     - name: Check the container runtime can apply the AppArmor profiles
       ansible.builtin.include_tasks: tasks/assert-apparmor-capable.yml
 
+    - name: Check the target host can receive an rsync
+      ansible.builtin.include_tasks: tasks/assert-rsync-present.yml
+
     - name: Resolve the release tag
       ansible.builtin.set_fact:
         release_tag: "v{{ effective_version }}"

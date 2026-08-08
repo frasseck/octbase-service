@@ -355,6 +355,11 @@
       ansible.builtin.meta: end_host
       when: inventory_hostname != (client_ledger.host | default(default_client_host))
 
+    # Earlier than the other pre-flights on purpose: a provision that cannot
+    # sync its source should not have created a Linux account first.
+    - name: Check the target host can receive an rsync
+      ansible.builtin.include_tasks: tasks/assert-rsync-present.yml
+
     # Generated on the admin machine; only used the first time the .env is
     # written (the template task below never overwrites an existing file).
     - name: Generate initial secrets
