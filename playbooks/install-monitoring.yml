@@ -63,6 +63,9 @@
     # whatever uncommitted edit — that checkout happens to be sitting on; the
     # same reasoning that moved create-instance.yml to the release cache).
     # Fetch the platform release tag into that same cache and copy from there.
+    # The refspec must name the tag — see the long comment in set-version.yml:
+    # a bare fetch of this shared cache resolves whatever tag it was first
+    # cloned at, which breaks every deploy once that tag is gone upstream.
     - name: Fetch the platform release on the admin machine
       delegate_to: localhost
       run_once: true
@@ -71,6 +74,7 @@
         repo: "{{ octbase_repo }}"
         dest: "{{ octbase_release_cache }}"
         version: "v{{ octbase_version }}"
+        refspec: "+refs/tags/v{{ octbase_version }}:refs/tags/v{{ octbase_version }}"
         depth: 1
         force: true
 

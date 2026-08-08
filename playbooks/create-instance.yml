@@ -492,6 +492,9 @@
           version that is already tagged.
       when: octbase_src_remote is not defined
 
+    # The refspec must name the tag — see the long comment in set-version.yml:
+    # a bare fetch of this shared cache resolves whatever tag it was first
+    # cloned at, which breaks every deploy once that tag is gone upstream.
     - name: Fetch the release on the admin machine
       delegate_to: localhost
       become: false
@@ -499,6 +502,7 @@
         repo: "{{ octbase_repo }}"
         dest: "{{ octbase_release_cache }}"
         version: "{{ client_release_tag }}"
+        refspec: "+refs/tags/{{ client_release_tag }}:refs/tags/{{ client_release_tag }}"
         depth: 1
         force: true
       when: octbase_src_remote is not defined

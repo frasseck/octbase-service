@@ -321,7 +321,7 @@ ansible-playbook playbooks/create-instance.yml -e client=acme
 ### Which version an instance runs
 
 `create-instance.yml` deploys the app repo **tag** that the ledger's
-`app_version` names — `app_version: "1.0.8"` deploys tag `v1.0.8` — and stamps
+`app_version` names — `app_version: "1.0.2"` deploys tag `v1.0.2` — and stamps
 `OCTBASE_APP_VERSION` with the same value. The version therefore *selects* the
 code rather than just labelling it, so a client cannot run code that disagrees
 with its own stamp (C4), and nothing about the admin machine's checkout can
@@ -496,7 +496,7 @@ For an ad-hoc override (extra-vars beat the ledger), pass it explicitly —
 and update the ledger afterwards so it stays the source of truth:
 
 ```bash
-ansible-playbook playbooks/set-version.yml -e client=acme -e app_version=1.0.8
+ansible-playbook playbooks/set-version.yml -e client=acme -e app_version=1.0.2
 ```
 
 The playbook refuses before touching the instance if the app repo has no

@@ -7,7 +7,7 @@
 #
 # An extra-var overrides the ledger for ad-hoc changes (update the ledger
 # afterwards — it must stay the source of truth):
-#   ansible-playbook playbooks/set-version.yml -e client=acme -e app_version=1.0.8
+#   ansible-playbook playbooks/set-version.yml -e client=acme -e app_version=1.0.2
 #
 # This is the counterpart to sync-instance.yml: same update-only contract (no
 # account creation, no secrets, no .env rewrite beyond the version stamp, no
@@ -134,6 +134,16 @@
           C4), or pick a version that is already tagged.
 
     # On the ADMIN machine, not the host — the host never talks to GitHub.
+    #
+    # The refspec is explicit on purpose. A depth-1 clone at a TAG leaves
+    # remote.origin.fetch pinned to that one tag, and the git module then
+    # fetches this shared cache with a bare `git fetch --tags --force origin`,
+    # which resolves that stored refspec rather than the tag being deployed.
+    # Once the pinned tag stops existing upstream — as the pre-reset 1.0.x
+    # lineage did — every release deploy from that admin machine fails with
+    # "couldn't find remote ref", whatever version was asked for, on every
+    # playbook sharing the cache. Naming the refspec keeps each run
+    # self-sufficient regardless of what the cache was cloned at.
     - name: Fetch the release on the admin machine
       delegate_to: localhost
       run_once: true
@@ -142,6 +152,7 @@
         repo: "{{ octbase_repo }}"
         dest: "{{ octbase_release_cache }}"
         version: "{{ release_tag }}"
+        refspec: "+refs/tags/{{ release_tag }}:refs/tags/{{ release_tag }}"
         depth: 1
         force: true
 
